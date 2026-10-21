@@ -10,12 +10,30 @@ import hashlib
 import os
 from datetime import datetime
 
-DOSSIER_TELECHARGEMENT = "/storage/emulated/0/Download/"
-CHEMIN_DB = DOSSIER_TELECHARGEMENT + "pharmacie.db"
-DOSSIER_RECUS = DOSSIER_TELECHARGEMENT + "recus"
+import shutil
 
+CHEMIN_DB = ""
+DOSSIER_RECUS = ""
+
+def preparer_chemins():
+    try:
+        from kivy.app import App
+        base = App.get_running_app().user_data_dir
+    except Exception:
+        base = os.path.dirname(os.path.abspath(__file__))
+    os.makedirs(base, exist_ok=True)
+    chemin_db = os.path.join(base, "pharmacie.db")
+    if not os.path.exists(chemin_db):
+        source = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pharmacie.db")
+        if os.path.exists(source):
+            shutil.copy(source, chemin_db)
+    dossier_recus = os.path.join(base, "recus")
+    os.makedirs(dossier_recus, exist_ok=True)
+    return chemin_db, dossier_recus
 class PharmacieApp(App):
     def build(self):
+        global CHEMIN_DB, DOSSIER_RECUS
+        CHEMIN_DB, DOSSIER_RECUS = preparer_chemins()
         self.layout = BoxLayout(orientation='vertical', padding=30, spacing=20)
         self.username_courant = ""
         self.afficher_connexion()
