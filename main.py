@@ -1,3 +1,5 @@
+from kivy.core.window import Window
+Window.orientation = 'portrait'
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
