@@ -1,5 +1,25 @@
-from kivy.core.window import Window
-Window.orientation = 'portrait'
+from kivy.app import App
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.button import Button
+from kivy.uix.label import Label
+from kivy.uix.textinput import TextInput
+from kivy.uix.gridlayout import GridLayout
+from kivy.uix.scrollview import ScrollView
+import sqlite3
+import hashlib
+import os
+from datetime import datetime
+import shutil
+
+# --- NOUVEAU CODE POUR FORCER L'ÉCRAN VERTICAL ---
+try:
+    from android import mActivity
+    from jnius import autoclass
+    ActivityInfo = autoclass('android.content.pm.ActivityInfo')
+    mActivity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
+except Exception as e:
+    print("Pas sur Android, on ignore l'orientation :", e)
+# -------------------------------------------------
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
