@@ -1,3 +1,7 @@
+from kivy.config import Config
+Config.set('graphics', 'orientation', 'portrait')
+Config.set('graphics', 'resizable', False)
+
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
@@ -10,9 +14,6 @@ import hashlib
 import os
 from datetime import datetime
 import shutil
-
-# --- NOUVEAU CODE POUR FORCER L'ÉCRAN VERTICAL ---
-try:
     from android import mActivity
     from jnius import autoclass
     ActivityInfo = autoclass('android.content.pm.ActivityInfo')
