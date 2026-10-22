@@ -20,13 +20,14 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git zip unzip openjdk-17-jdk python3-pip autoconf automake libtool libtool-bin pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev cmake libffi-dev libssl-dev libgl1-mesa-dev libgles2-mesa-dev
+          sudo apt-get install -y git zip unzip openjdk-11-jdk python3-pip autoconf automake libtool libtool-bin pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev cmake libffi-dev libssl-dev libgl1-mesa-dev libgles2-mesa-dev
           pip3 install --user --upgrade buildozer cython==3.0.10 virtualenv
 
       - name: Build APK
         run: |
           export PATH=$PATH:~/.local/bin
           export BUILDOZER_WARN_ON_ROOT=0
+          export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
           echo "y" | buildozer -v android debug
 
       - name: Upload APK
