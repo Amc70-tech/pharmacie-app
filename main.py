@@ -16,14 +16,7 @@ import os
 from datetime import datetime
 import shutil
 
-# --- BLOC CORRIGÉ POUR L'ORIENTATION ANDROID ---
-try:
-    from android import mActivity
-    from jnius import autoclass
-    ActivityInfo = autoclass('android.content.pm.ActivityInfo')
-    mActivity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
-except Exception as e:
-    print("Pas sur Android, on ignore l'orientation :", e)
+
 # -------------------------------------------------
 
 CHEMIN_DB = ""
