@@ -31,6 +31,7 @@ VERT = (0, 1, 0, 1)
 BLEU = (0, 0.4, 0.8, 1)
 ORANGE = (1, 0.5, 0, 1)
 VIOLET = (0.6, 0.2, 0.8, 1)
+GRIS = (0.5, 0.5, 0.5, 1)
 
 def preparer_chemins(base):
     os.makedirs(base, exist_ok=True)
@@ -42,6 +43,23 @@ def preparer_chemins(base):
     dossier_recus = os.path.join(base, "recus")
     os.makedirs(dossier_recus, exist_ok=True)
     return chemin_db, dossier_recus
+
+def migrer_base_de_donnees():
+    """Ajoute la colonne 'role' si elle n'existe pas."""
+    try:
+        conn = sqlite3.connect(CHEMIN_DB)
+        c = conn.cursor()
+        # Vérifier si la colonne role existe
+        c.execute("PRAGMA table_info(utilisateurs)")
+        colonnes = [info[1] for info in c.fetchall()]
+        if "role" not in colonnes:
+            c.execute("ALTER TABLE utilisateurs ADD COLUMN role TEXT DEFAULT 'caissier'")
+            # Mettre l'utilisateur 'admin' en tant qu'admin
+            c.execute("UPDATE utilisateurs SET role='admin' WHERE username='admin'")
+            conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Erreur migration : {e}")
 
 def titre(texte, taille=24):
     return Label(text=texte, font_size=sp(taille), bold=True, halign="center",
@@ -62,8 +80,10 @@ class PharmacieApp(App):
         try:
             global CHEMIN_DB, DOSSIER_RECUS
             CHEMIN_DB, DOSSIER_RECUS = preparer_chemins(self.user_data_dir)
+            migrer_base_de_donnees() # Met à jour la base pour les rôles
             self.layout = BoxLayout(orientation='vertical', padding=dp(15), spacing=dp(10))
             self.username_courant = ""
+            self.role_courant = ""
             self.panier = []
             self.afficher_connexion()
         except Exception as e:
@@ -109,6 +129,7 @@ class PharmacieApp(App):
                 h = hashlib.sha256((sel + password).encode()).hexdigest()
                 if h == user["password_hash"]:
                     self.username_courant = username
+                    self.role_courant = user["role"] # Stocke le rôle
                     self.user_input.text = ""
                     self.pass_input.text = ""
                     self.message.text = ""
@@ -121,7 +142,7 @@ class PharmacieApp(App):
             self.message.text = f"Erreur : {str(e)}"
 
     # ====================================================
-    # MENU PRINCIPAL
+    # MENU PRINCIPAL (Adapté selon le rôle)
     # ====================================================
     def afficher_menu(self):
         self.layout.clear_widgets()
@@ -131,24 +152,28 @@ class PharmacieApp(App):
 
         btn_vendre = Button(text="VENDRE", font_size=sp(18), background_color=(0, 0.6, 0, 1))
         btn_vendre.bind(on_press=self.afficher_vendre)
-        
-        btn_stock = Button(text="STOCK", font_size=sp(18))
-        btn_stock.bind(on_press=self.afficher_stock)
-        
+        grille.add_widget(btn_vendre)
+
         btn_recus = Button(text="REÇUS", font_size=sp(18))
         btn_recus.bind(on_press=self.afficher_recus)
-        
-        btn_alertes = Button(text="ALERTES", font_size=sp(18), background_color=ORANGE)
-        btn_alertes.bind(on_press=self.afficher_alertes)
-        
-        btn_bilan = Button(text="BILAN DU JOUR", font_size=sp(18), background_color=VIOLET)
-        btn_bilan.bind(on_press=self.afficher_bilan)
-        
-        btn_params = Button(text="PARAMÈTRES", font_size=sp(18))
-        btn_params.bind(on_press=self.afficher_parametres)
+        grille.add_widget(btn_recus)
 
-        for b in (btn_vendre, btn_stock, btn_recus, btn_alertes, btn_bilan, btn_params):
-            grille.add_widget(b)
+        if self.role_courant == 'admin':
+            btn_stock = Button(text="STOCK", font_size=sp(18))
+            btn_stock.bind(on_press=self.afficher_stock)
+            grille.add_widget(btn_stock)
+            
+            btn_alertes = Button(text="ALERTES", font_size=sp(18), background_color=ORANGE)
+            btn_alertes.bind(on_press=self.afficher_alertes)
+            grille.add_widget(btn_alertes)
+            
+            btn_bilan = Button(text="BILAN DU JOUR", font_size=sp(18), background_color=VIOLET)
+            btn_bilan.bind(on_press=self.afficher_bilan)
+            grille.add_widget(btn_bilan)
+            
+            btn_params = Button(text="PARAMÈTRES", font_size=sp(18))
+            btn_params.bind(on_press=self.afficher_parametres)
+            grille.add_widget(btn_params)
 
         self.layout.add_widget(grille)
         
@@ -158,6 +183,7 @@ class PharmacieApp(App):
 
     def deconnexion(self, instance):
         self.username_courant = ""
+        self.role_courant = ""
         self.panier = []
         self.afficher_connexion()
 
@@ -198,7 +224,7 @@ class PharmacieApp(App):
         except Exception as e:
             self.layout.add_widget(Label(text=f"Erreur : {str(e)}", font_size=sp(16), color=ROUGE))
 
-        btn_retour = bouton("RETOUR", (0.5, 0.5, 0.5, 1), hauteur=50)
+        btn_retour = bouton("RETOUR", GRIS, hauteur=50)
         btn_retour.bind(on_press=lambda x: self.afficher_menu())
         self.layout.add_widget(btn_retour)
 
@@ -246,7 +272,7 @@ class PharmacieApp(App):
         scroll.add_widget(grille_alertes)
         self.layout.add_widget(scroll)
 
-        btn_retour = bouton("RETOUR", (0.5, 0.5, 0.5, 1), hauteur=50)
+        btn_retour = bouton("RETOUR", GRIS, hauteur=50)
         btn_retour.bind(on_press=lambda x: self.afficher_menu())
         self.layout.add_widget(btn_retour)
 
@@ -313,7 +339,7 @@ class PharmacieApp(App):
         layout_btns.add_widget(btn_valider)
         self.layout.add_widget(layout_btns)
 
-        btn_retour = bouton("RETOUR", (0.5, 0.5, 0.5, 1), hauteur=45)
+        btn_retour = bouton("RETOUR", GRIS, hauteur=45)
         btn_retour.bind(on_press=lambda x: self.afficher_menu())
         self.layout.add_widget(btn_retour)
 
@@ -408,7 +434,7 @@ class PharmacieApp(App):
 
             c.execute("SELECT cle, valeur FROM parametres")
             params = {row["cle"]: row["valeur"] for row in c.fetchall()}
-            nom_pharma = params.get("nom", "PHARMACIE")
+            nom_pharma = params.get("nom", "DILEROM")
             message_recu = params.get("message", "Merci de votre visite !")
             adresse = params.get("adresse", "")
             telephone = params.get("telephone", "")
@@ -419,7 +445,8 @@ class PharmacieApp(App):
             nom_fichier = os.path.join(DOSSIER_RECUS, f"recu_{groupe}.txt")
             with open(nom_fichier, "w", encoding="utf-8") as f:
                 f.write("========================================\n")
-                f.write(f"           {nom_pharma.upper()}\n")
+                # MODIFICATION ICI : On force le mot PHARMACIE devant le nom
+                f.write(f"           PHARMACIE {nom_pharma.upper()}\n")
                 if adresse: f.write(f"           {adresse}\n")
                 if telephone: f.write(f"           Tel : {telephone}\n")
                 f.write("========================================\n")
@@ -499,7 +526,7 @@ class PharmacieApp(App):
 
         self.layout.add_widget(grille_btns)
 
-        btn_retour = bouton("RETOUR", (0.5, 0.5, 0.5, 1), hauteur=48)
+        btn_retour = bouton("RETOUR", GRIS, hauteur=48)
         btn_retour.bind(on_press=lambda x: self.afficher_menu())
         self.layout.add_widget(btn_retour)
 
@@ -517,7 +544,7 @@ class PharmacieApp(App):
         btn_sauver = bouton("ENREGISTRER LE PRODUIT", (0, 0.6, 0, 1), hauteur=56)
         btn_sauver.bind(on_press=self.sauvegarder_nouveau_produit)
         self.layout.add_widget(btn_sauver)
-        btn_retour = bouton("RETOUR", (0.5, 0.5, 0.5, 1), hauteur=50)
+        btn_retour = bouton("RETOUR", GRIS, hauteur=50)
         btn_retour.bind(on_press=lambda x: self.afficher_stock(None))
         self.layout.add_widget(btn_retour)
 
@@ -588,7 +615,7 @@ class PharmacieApp(App):
         btn_suppr = bouton("SUPPRIMER DÉFINITIVEMENT", (0.8, 0, 0, 1), hauteur=56)
         btn_suppr.bind(on_press=self.supprimer_produit)
         self.layout.add_widget(btn_suppr)
-        btn_retour = bouton("RETOUR", (0.5, 0.5, 0.5, 1), hauteur=50)
+        btn_retour = bouton("RETOUR", GRIS, hauteur=50)
         btn_retour.bind(on_press=lambda x: self.afficher_stock(None))
         self.layout.add_widget(btn_retour)
 
@@ -744,7 +771,7 @@ class PharmacieApp(App):
             grille_recus.add_widget(Label(text=f"Erreur : {str(e)}", font_size=sp(14), size_hint_y=None, height=dp(56)))
         scroll.add_widget(grille_recus)
         self.layout.add_widget(scroll)
-        btn_retour = bouton("RETOUR", (0.5, 0.5, 0.5, 1), hauteur=50)
+        btn_retour = bouton("RETOUR", GRIS, hauteur=50)
         btn_retour.bind(on_press=lambda x: self.afficher_menu())
         self.layout.add_widget(btn_retour)
 
@@ -763,7 +790,7 @@ class PharmacieApp(App):
                        texture_size=lambda inst, ts: setattr(inst, 'height', ts[1]))
         scroll.add_widget(lbl_texte)
         self.layout.add_widget(scroll)
-        btn_retour = bouton("RETOUR", (0.5, 0.5, 0.5, 1), hauteur=50)
+        btn_retour = bouton("RETOUR", GRIS, hauteur=50)
         btn_retour.bind(on_press=lambda x: self.afficher_recus(None))
         self.layout.add_widget(btn_retour)
 
@@ -791,7 +818,8 @@ class PharmacieApp(App):
             pass
             
         self.param_inputs = {}
-        champs = [("nom", "Nom de la pharmacie"), ("adresse", "Adresse"), ("telephone", "Téléphone"), ("email", "Email"), ("nif", "NIF"), ("message", "Message du reçu")]
+        # Modification du label pour éviter la confusion
+        champs = [("nom", "Nom de l'établissement (ex: DILEROM)"), ("adresse", "Adresse"), ("telephone", "Téléphone"), ("email", "Email"), ("nif", "NIF"), ("message", "Message du reçu")]
         
         for cle, label_txt in champs:
             lbl = Label(text=label_txt, font_size=sp(14), size_hint_y=None, height=dp(28), halign="left", color=(1, 1, 1, 1))
@@ -811,17 +839,15 @@ class PharmacieApp(App):
         btn_sauver.bind(on_press=self.sauvegarder_parametres)
         self.layout.add_widget(btn_sauver)
 
-        # Bouton Gestion des utilisateurs
         btn_users = bouton("GÉRER LES UTILISATEURS", ORANGE, hauteur=50)
         btn_users.bind(on_press=self.afficher_utilisateurs)
         self.layout.add_widget(btn_users)
 
-        # Bouton Sauvegarde de la base
         btn_backup = bouton("SAUVEGARDER LA BASE", BLEU, hauteur=50)
         btn_backup.bind(on_press=self.sauvegarder_base)
         self.layout.add_widget(btn_backup)
 
-        btn_retour = bouton("RETOUR", (0.5, 0.5, 0.5, 1), hauteur=50)
+        btn_retour = bouton("RETOUR", GRIS, hauteur=50)
         btn_retour.bind(on_press=lambda x: self.afficher_menu())
         self.layout.add_widget(btn_retour)
 
@@ -852,13 +878,12 @@ class PharmacieApp(App):
             self._show_popup("Erreur de sauvegarde", str(e))
 
     # ====================================================
-    # GESTION DES UTILISATEURS
+    # GESTION DES UTILISATEURS ET DES RÔLES
     # ====================================================
     def afficher_utilisateurs(self, instance):
         self.layout.clear_widgets()
         self.layout.add_widget(titre("GESTION DES UTILISATEURS", 22))
 
-        # Liste pour supprimer
         self.user_spinner = Spinner(text="Sélectionnez un utilisateur", values=[], font_size=sp(16), size_hint=(1, None), height=dp(45), background_color=(0.2, 0.2, 0.2, 1))
         self.maj_liste_utilisateurs()
         self.layout.add_widget(self.user_spinner)
@@ -867,6 +892,14 @@ class PharmacieApp(App):
         btn_suppr.bind(on_press=self.supprimer_utilisateur)
         self.layout.add_widget(btn_suppr)
 
+        self.layout.add_widget(Label(text="Changer le mot de passe", font_size=sp(14), bold=True, color=ORANGE))
+        self.reset_pass_input = champ("Nouveau mot de passe", password=True)
+        self.layout.add_widget(self.reset_pass_input)
+        
+        btn_reset = bouton("CHANGER LE MOT DE PASSE", ORANGE, hauteur=45)
+        btn_reset.bind(on_press=self.changer_mot_de_passe)
+        self.layout.add_widget(btn_reset)
+
         self.layout.add_widget(Label(text="Ajouter un nouvel utilisateur", font_size=sp(16), bold=True, color=VERT))
         
         self.new_user_input = champ("Nouveau nom d'utilisateur")
@@ -874,6 +907,9 @@ class PharmacieApp(App):
         
         self.new_pass_input = champ("Nouveau mot de passe", password=True)
         self.layout.add_widget(self.new_pass_input)
+
+        self.new_role_spinner = Spinner(text="Rôle", values=["caissier", "admin"], font_size=sp(16), size_hint=(1, None), height=dp(45), background_color=(0.2, 0.2, 0.2, 1))
+        self.layout.add_widget(self.new_role_spinner)
         
         self.msg_users = Label(text="", font_size=sp(14), halign="center")
         self.layout.add_widget(self.msg_users)
@@ -882,7 +918,7 @@ class PharmacieApp(App):
         btn_ajouter.bind(on_press=self.ajouter_utilisateur)
         self.layout.add_widget(btn_ajouter)
 
-        btn_retour = bouton("RETOUR", (0.5, 0.5, 0.5, 1), hauteur=50)
+        btn_retour = bouton("RETOUR", GRIS, hauteur=50)
         btn_retour.bind(on_press=lambda x: self.afficher_parametres(None))
         self.layout.add_widget(btn_retour)
 
@@ -900,16 +936,16 @@ class PharmacieApp(App):
     def ajouter_utilisateur(self, instance):
         username = self.new_user_input.text.strip()
         password = self.new_pass_input.text.strip()
+        role = self.new_role_spinner.text
 
-        if not username or not password:
+        if not username or not password or role not in ["caissier", "admin"]:
             self.msg_users.color = ROUGE
-            self.msg_users.text = "Veuillez remplir les deux champs."
+            self.msg_users.text = "Veuillez remplir tous les champs."
             return
 
         try:
             conn = sqlite3.connect(CHEMIN_DB)
             c = conn.cursor()
-            # Vérifier s'il existe déjà
             c.execute("SELECT id FROM utilisateurs WHERE username=?", (username,))
             if c.fetchone():
                 self.msg_users.color = ROUGE
@@ -917,16 +953,15 @@ class PharmacieApp(App):
                 conn.close()
                 return
 
-            # Générer un sel aléatoire et hacher le mot de passe
             sel = os.urandom(16).hex()
             mdp_hash = hashlib.sha256((sel + password).encode()).hexdigest()
 
-            c.execute("INSERT INTO utilisateurs (username, sel, password_hash) VALUES (?, ?, ?)", (username, sel, mdp_hash))
+            c.execute("INSERT INTO utilisateurs (username, sel, password_hash, role) VALUES (?, ?, ?, ?)", (username, sel, mdp_hash, role))
             conn.commit()
             conn.close()
 
             self.msg_users.color = VERT
-            self.msg_users.text = f"Utilisateur '{username}' ajouté !"
+            self.msg_users.text = f"Utilisateur '{username}' ({role}) ajouté !"
             self.new_user_input.text = ""
             self.new_pass_input.text = ""
             self.maj_liste_utilisateurs()
@@ -939,7 +974,7 @@ class PharmacieApp(App):
         username = self.user_spinner.text
         if not username or username == "Sélectionnez un utilisateur":
             self.msg_users.color = ROUGE
-            self.msg_users.text = "Sélectionnez un utilisateur à supprimer."
+            self.msg_users.text = "Sélectionnez un utilisateur."
             return
 
         if username == self.username_courant:
@@ -958,6 +993,35 @@ class PharmacieApp(App):
             self.msg_users.text = f"Utilisateur '{username}' supprimé."
             self.user_spinner.text = "Sélectionnez un utilisateur"
             self.maj_liste_utilisateurs()
+        except Exception as e:
+            self.msg_users.color = ROUGE
+            self.msg_users.text = f"Erreur : {str(e)}"
+
+    def changer_mot_de_passe(self, instance):
+        username = self.user_spinner.text
+        new_pass = self.reset_pass_input.text.strip()
+
+        if not username or username == "Sélectionnez un utilisateur":
+            self.msg_users.color = ROUGE
+            self.msg_users.text = "Sélectionnez un utilisateur d'abord."
+            return
+        if not new_pass:
+            self.msg_users.color = ROUGE
+            self.msg_users.text = "Tapez un nouveau mot de passe."
+            return
+
+        try:
+            conn = sqlite3.connect(CHEMIN_DB)
+            c = conn.cursor()
+            sel = os.urandom(16).hex()
+            mdp_hash = hashlib.sha256((sel + new_pass).encode()).hexdigest()
+            c.execute("UPDATE utilisateurs SET sel=?, password_hash=? WHERE username=?", (sel, mdp_hash, username))
+            conn.commit()
+            conn.close()
+            
+            self.msg_users.color = VERT
+            self.msg_users.text = f"Mot de passe de '{username}' modifié !"
+            self.reset_pass_input.text = ""
         except Exception as e:
             self.msg_users.color = ROUGE
             self.msg_users.text = f"Erreur : {str(e)}"
