@@ -10,6 +10,7 @@ from kivy.uix.label import Label
 from kivy.uix.textinput import TextInput
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.scrollview import ScrollView
+from kivy.uix.spinner import Spinner  # <-- NOUVEL IMPORT
 import sqlite3
 import hashlib
 import os
@@ -27,8 +28,6 @@ VERT = (0, 1, 0, 1)
 
 
 def preparer_chemins(base):
-    """Base et reçus dans le dossier privé de l'app.
-    Au premier lancement, la base embarquée dans l'APK est copiée."""
     os.makedirs(base, exist_ok=True)
     chemin_db = os.path.join(base, "pharmacie.db")
     if not os.path.exists(chemin_db):
@@ -40,9 +39,6 @@ def preparer_chemins(base):
     return chemin_db, dossier_recus
 
 
-# ----------------------------------------------------
-# Petits constructeurs d'interface (tailles en dp / sp)
-# ----------------------------------------------------
 def titre(texte, taille=24):
     return Label(text=texte, font_size=sp(taille), bold=True, halign="center",
                  size_hint=(1, None), height=dp(70))
@@ -162,9 +158,39 @@ class PharmacieApp(App):
 
         self.layout.add_widget(titre("VENDRE", 24))
 
-        self.input_nom = champ("Nom du produit (ex: paracetamol)")
-        self.layout.add_widget(self.input_nom)
+        # Récupération des produits pour la liste déroulante
+        try:
+            conn = sqlite3.connect(CHEMIN_DB)
+            conn.row_factory = sqlite3.Row
+            c = conn.cursor()
+            c.execute("SELECT nom, prix_vente, stock FROM medicaments ORDER BY nom")
+            produits = c.fetchall()
+            conn.close()
+            self.liste_produits = {p["nom"]: p for p in produits}
+        except Exception:
+            self.liste_produits = {}
 
+        valeurs = list(self.liste_produits.keys())
+        if not valeurs:
+            valeurs = ["Aucun produit en base"]
+
+        # Liste déroulante
+        self.spinner_produit = Spinner(
+            text="Sélectionnez un produit",
+            values=valeurs,
+            font_size=sp(16),
+            size_hint=(1, None),
+            height=dp(50),
+            background_color=(0.2, 0.2, 0.2, 1)
+        )
+        self.spinner_produit.bind(text=self.maj_info_produit)
+        self.layout.add_widget(self.spinner_produit)
+
+        # Label pour afficher le prix et le stock dès qu'on sélectionne
+        self.info_produit = Label(text="", font_size=sp(14), color=(0.8, 0.8, 0.8, 1), size_hint=(1, None), height=dp(30))
+        self.layout.add_widget(self.info_produit)
+
+        # Champ quantité
         self.input_qte = champ("Quantité", input_filter='int')
         self.layout.add_widget(self.input_qte)
 
@@ -179,20 +205,32 @@ class PharmacieApp(App):
         btn_retour.bind(on_press=lambda x: self.afficher_menu())
         self.layout.add_widget(btn_retour)
 
+    def maj_info_produit(self, spinner, text):
+        if text in self.liste_produits:
+            p = self.liste_produits[text]
+            self.info_produit.text = f"Prix : {p['prix_vente']} FCFA  |  Stock : {p['stock']} dispo"
+        else:
+            self.info_produit.text = ""
+
     def _erreur_vente(self, texte):
         self.msg_vendre.color = ROUGE
         self.msg_vendre.text = texte
 
     def valider_vente(self, instance):
-        nom = self.input_nom.text.strip()
+        nom = self.spinner_produit.text
+        
+        if nom not in self.liste_produits:
+            self._erreur_vente("Veuillez sélectionner un produit valide.")
+            return
+
         try:
             qte = int(self.input_qte.text.strip())
         except ValueError:
             self._erreur_vente("Erreur : Quantité invalide.")
             return
 
-        if not nom or qte <= 0:
-            self._erreur_vente("Erreur : Remplissez les champs.")
+        if qte <= 0:
+            self._erreur_vente("Erreur : Quantité invalide.")
             return
 
         conn = None
@@ -201,26 +239,21 @@ class PharmacieApp(App):
             conn.row_factory = sqlite3.Row
             c = conn.cursor()
 
-            c.execute("SELECT * FROM medicaments WHERE LOWER(nom) LIKE ?", (f"%{nom.lower()}%",))
-            produit = c.fetchone()
-
-            if not produit:
-                self._erreur_vente("Produit introuvable.")
-                return
+            produit = self.liste_produits[nom]
 
             if produit["stock"] < qte:
                 self._erreur_vente(f"Stock insuffisant ({produit['stock']} dispo).")
                 return
 
             nouveau_stock = produit["stock"] - qte
-            c.execute("UPDATE medicaments SET stock=? WHERE id=?", (nouveau_stock, produit["id"]))
+            c.execute("UPDATE medicaments SET stock=? WHERE nom=?", (nouveau_stock, nom))
 
             total = qte * produit["prix_vente"]
             date_v = datetime.now().strftime("%Y-%m-%d %H:%M")
             groupe = datetime.now().strftime("V%Y%m%d_%H%M%S")
 
             c.execute("INSERT INTO ventes(date_vente,medicament,quantite,prix_unitaire,total,groupe) VALUES(?,?,?,?,?,?)",
-                      (date_v, produit["nom"], qte, produit["prix_vente"], total, groupe))
+                      (date_v, nom, qte, produit["prix_vente"], total, groupe))
 
             # Paramètres pour le reçu
             c.execute("SELECT cle, valeur FROM parametres")
@@ -246,7 +279,7 @@ class PharmacieApp(App):
                 f.write(f"N° : {groupe}\n")
                 f.write(f"Date : {date_v}\n")
                 f.write("----------------------------------------\n")
-                f.write(f"Produit : {produit['nom']}\n")
+                f.write(f"Produit : {nom}\n")
                 f.write(f"Quantite : {qte}\n")
                 f.write(f"Prix U : {produit['prix_vente']} FCFA\n")
                 f.write("----------------------------------------\n")
@@ -255,9 +288,12 @@ class PharmacieApp(App):
                 f.write(f"{message_recu}\n")
 
             self.msg_vendre.color = VERT
-            self.msg_vendre.text = f"Vendu : {qte} x {produit['nom']}\nTotal : {total} FCFA\nReçu généré !"
-            self.input_nom.text = ""
+            self.msg_vendre.text = f"Vendu : {qte} x {nom}\nTotal : {total} FCFA\nReçu généré !"
             self.input_qte.text = ""
+            
+            # Mettre à jour l'affichage du stock instantanément
+            self.spinner_produit.text = "Sélectionnez un produit"
+            self.info_produit.text = ""
 
         except Exception as e:
             self._erreur_vente(f"Erreur : {str(e)}")
