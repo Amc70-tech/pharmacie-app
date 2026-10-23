@@ -45,18 +45,25 @@ def preparer_chemins(base):
     return chemin_db, dossier_recus
 
 def migrer_base_de_donnees():
-    """Ajoute la colonne 'role' si elle n'existe pas."""
+    """Met à jour la base de données pour ajouter les rôles et le suivi des vendeurs."""
     try:
         conn = sqlite3.connect(CHEMIN_DB)
         c = conn.cursor()
-        # Vérifier si la colonne role existe
+        
+        # 1. Vérifier la colonne 'role' dans utilisateurs
         c.execute("PRAGMA table_info(utilisateurs)")
-        colonnes = [info[1] for info in c.fetchall()]
-        if "role" not in colonnes:
+        colonnes_users = [info[1] for info in c.fetchall()]
+        if "role" not in colonnes_users:
             c.execute("ALTER TABLE utilisateurs ADD COLUMN role TEXT DEFAULT 'caissier'")
-            # Mettre l'utilisateur 'admin' en tant qu'admin
             c.execute("UPDATE utilisateurs SET role='admin' WHERE username='admin'")
-            conn.commit()
+
+        # 2. Vérifier la colonne 'vendeur' dans ventes
+        c.execute("PRAGMA table_info(ventes)")
+        colonnes_ventes = [info[1] for info in c.fetchall()]
+        if "vendeur" not in colonnes_ventes:
+            c.execute("ALTER TABLE ventes ADD COLUMN vendeur TEXT DEFAULT 'Inconnu'")
+
+        conn.commit()
         conn.close()
     except Exception as e:
         print(f"Erreur migration : {e}")
@@ -80,7 +87,7 @@ class PharmacieApp(App):
         try:
             global CHEMIN_DB, DOSSIER_RECUS
             CHEMIN_DB, DOSSIER_RECUS = preparer_chemins(self.user_data_dir)
-            migrer_base_de_donnees() # Met à jour la base pour les rôles
+            migrer_base_de_donnees()
             self.layout = BoxLayout(orientation='vertical', padding=dp(15), spacing=dp(10))
             self.username_courant = ""
             self.role_courant = ""
@@ -129,7 +136,7 @@ class PharmacieApp(App):
                 h = hashlib.sha256((sel + password).encode()).hexdigest()
                 if h == user["password_hash"]:
                     self.username_courant = username
-                    self.role_courant = user["role"] # Stocke le rôle
+                    self.role_courant = user["role"]
                     self.user_input.text = ""
                     self.pass_input.text = ""
                     self.message.text = ""
@@ -142,13 +149,13 @@ class PharmacieApp(App):
             self.message.text = f"Erreur : {str(e)}"
 
     # ====================================================
-    # MENU PRINCIPAL (Adapté selon le rôle)
+    # MENU PRINCIPAL
     # ====================================================
     def afficher_menu(self):
         self.layout.clear_widgets()
         self.layout.add_widget(titre(f"PHARMACIE\n{self.username_courant}", 24))
         
-        grille = GridLayout(cols=2, spacing=dp(12))
+        grille = GridLayout(cols=2, spacing=dp(10))
 
         btn_vendre = Button(text="VENDRE", font_size=sp(18), background_color=(0, 0.6, 0, 1))
         btn_vendre.bind(on_press=self.afficher_vendre)
@@ -167,9 +174,14 @@ class PharmacieApp(App):
             btn_alertes.bind(on_press=self.afficher_alertes)
             grille.add_widget(btn_alertes)
             
-            btn_bilan = Button(text="BILAN DU JOUR", font_size=sp(18), background_color=VIOLET)
+            btn_bilan = Button(text="BILAN DU JOUR", font_size=sp(16), background_color=VIOLET)
             btn_bilan.bind(on_press=self.afficher_bilan)
             grille.add_widget(btn_bilan)
+
+            # NOUVEAU BOUTON : Suivi des caissiers
+            btn_suivi = Button(text="SUIVI CAISSIERS", font_size=sp(16), background_color=(0.8, 0.2, 0.2, 1))
+            btn_suivi.bind(on_press=self.afficher_suivi_caissiers)
+            grille.add_widget(btn_suivi)
             
             btn_params = Button(text="PARAMÈTRES", font_size=sp(18))
             btn_params.bind(on_press=self.afficher_parametres)
@@ -188,11 +200,73 @@ class PharmacieApp(App):
         self.afficher_connexion()
 
     # ====================================================
+    # SUIVI DES CAISSIERS (Nouveau)
+    # ====================================================
+    def afficher_suivi_caissiers(self, instance):
+        self.layout.clear_widgets()
+        self.layout.add_widget(titre("SUIVI DES CAISSIERS\n(Aujourd'hui)", 20))
+
+        scroll = ScrollView(size_hint=(1, 0.8))
+        grille_suivi = GridLayout(cols=1, spacing=dp(10), size_hint_y=None)
+        grille_suivi.bind(minimum_height=grille_suivi.setter('height'))
+
+        date_auj = datetime.now().strftime("%Y-%m-%d")
+
+        try:
+            conn = sqlite3.connect(CHEMIN_DB)
+            conn.row_factory = sqlite3.Row
+            c = conn.cursor()
+            
+            # On regroupe les ventes par vendeur pour aujourd'hui
+            c.execute("""
+                SELECT vendeur, SUM(total) as ca, COUNT(DISTINCT groupe) as tickets 
+                FROM ventes 
+                WHERE date_vente LIKE ? 
+                GROUP BY vendeur
+            """, (f"{date_auj}%",))
+            resultats = c.fetchall()
+            conn.close()
+
+            if not resultats:
+                grille_suivi.add_widget(Label(text="Aucune vente enregistrée aujourd'hui.", 
+                                              font_size=sp(16), color=GRIS, size_hint_y=None, height=dp(60)))
+            else:
+                for r in resultats:
+                    texte = f"👤 Vendeur : {r['vendeur'].upper()}\n" \
+                            f"💰 Total : {r['ca']} FCFA\n" \
+                            f"🧾 Tickets : {r['tickets']}"
+                    
+                    lbl = Label(text=texte, font_size=sp(16), size_hint_y=None, height=dp(80),
+                                halign="left", valign="middle", color=(1, 1, 1, 1))
+                    lbl.bind(width=lambda inst, w: setattr(inst, 'text_size', (w, None)))
+                    
+                    # Un petit fond gris pour séparer les vendeurs
+                    box = BoxLayout(size_hint_y=None, height=dp(80), padding=dp(10))
+                    box.canvas.before.clear()
+                    with box.canvas.before:
+                        from kivy.graphics import Color, Rectangle
+                        Color(0.15, 0.15, 0.15, 1)
+                        Rectangle(pos=box.pos, size=box.size)
+                    
+                    box.add_widget(lbl)
+                    grille_suivi.add_widget(box)
+                    
+        except Exception as e:
+            grille_suivi.add_widget(Label(text=f"Erreur : {str(e)}", font_size=sp(14), color=ROUGE))
+
+        scroll.add_widget(grille_suivi)
+        self.layout.add_widget(scroll)
+
+        btn_retour = bouton("RETOUR", GRIS, hauteur=50)
+        btn_retour.bind(on_press=lambda x: self.afficher_menu())
+        self.layout.add_widget(btn_retour)
+
+    # ====================================================
     # BILAN DU JOUR
     # ====================================================
     def afficher_bilan(self, instance):
         self.layout.clear_widgets()
-        self.layout.add_widget(titre("BILAN DU JOUR", 24))
+        self.layout.add_widget(titre("BILAN GLOBAL DU JOUR", 24))
 
         date_auj = datetime.now().strftime("%Y-%m-%d")
         
@@ -200,7 +274,6 @@ class PharmacieApp(App):
             conn = sqlite3.connect(CHEMIN_DB)
             conn.row_factory = sqlite3.Row
             c = conn.cursor()
-            
             c.execute("SELECT SUM(total) as ca, COUNT(DISTINCT groupe) as nb_ventes, SUM(quantite) as nb_articles FROM ventes WHERE date_vente LIKE ?", (f"{date_auj}%",))
             res = c.fetchone()
             conn.close()
@@ -429,8 +502,9 @@ class PharmacieApp(App):
             for item in self.panier:
                 nouveau_stock = self.liste_produits[item['nom']]['stock'] - item['qte']
                 c.execute("UPDATE medicaments SET stock=? WHERE nom=?", (nouveau_stock, item['nom']))
-                c.execute("INSERT INTO ventes(date_vente,medicament,quantite,prix_unitaire,total,groupe) VALUES(?,?,?,?,?,?)",
-                          (date_v, item['nom'], item['qte'], item['prix'], item['total'], groupe))
+                # MODIFICATION ICI : On enregistre le vendeur
+                c.execute("INSERT INTO ventes(date_vente,medicament,quantite,prix_unitaire,total,groupe,vendeur) VALUES(?,?,?,?,?,?,?)",
+                          (date_v, item['nom'], item['qte'], item['prix'], item['total'], groupe, self.username_courant))
 
             c.execute("SELECT cle, valeur FROM parametres")
             params = {row["cle"]: row["valeur"] for row in c.fetchall()}
@@ -445,13 +519,13 @@ class PharmacieApp(App):
             nom_fichier = os.path.join(DOSSIER_RECUS, f"recu_{groupe}.txt")
             with open(nom_fichier, "w", encoding="utf-8") as f:
                 f.write("========================================\n")
-                # MODIFICATION ICI : On force le mot PHARMACIE devant le nom
                 f.write(f"           PHARMACIE {nom_pharma.upper()}\n")
                 if adresse: f.write(f"           {adresse}\n")
                 if telephone: f.write(f"           Tel : {telephone}\n")
                 f.write("========================================\n")
                 f.write(f"N° : {groupe}\n")
                 f.write(f"Date : {date_v}\n")
+                f.write(f"Vendeur : {self.username_courant.upper()}\n") # MODIFICATION ICI : Affiché sur le reçu
                 f.write("----------------------------------------\n")
                 for item in self.panier:
                     f.write(f"{item['qte']} x {item['nom']}\n")
@@ -818,7 +892,6 @@ class PharmacieApp(App):
             pass
             
         self.param_inputs = {}
-        # Modification du label pour éviter la confusion
         champs = [("nom", "Nom de l'établissement (ex: DILEROM)"), ("adresse", "Adresse"), ("telephone", "Téléphone"), ("email", "Email"), ("nif", "NIF"), ("message", "Message du reçu")]
         
         for cle, label_txt in champs:
