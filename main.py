@@ -10,7 +10,7 @@ from kivy.uix.label import Label
 from kivy.uix.textinput import TextInput
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.scrollview import ScrollView
-from kivy.uix.spinner import Spinner  # <-- NOUVEL IMPORT
+from kivy.uix.spinner import Spinner
 import sqlite3
 import hashlib
 import os
@@ -255,7 +255,6 @@ class PharmacieApp(App):
             c.execute("INSERT INTO ventes(date_vente,medicament,quantite,prix_unitaire,total,groupe) VALUES(?,?,?,?,?,?)",
                       (date_v, nom, qte, produit["prix_vente"], total, groupe))
 
-            # Paramètres pour le reçu
             c.execute("SELECT cle, valeur FROM parametres")
             params = {row["cle"]: row["valeur"] for row in c.fetchall()}
             nom_pharma = params.get("nom", "PHARMACIE")
@@ -265,7 +264,6 @@ class PharmacieApp(App):
 
             conn.commit()
 
-            # Génération du reçu
             os.makedirs(DOSSIER_RECUS, exist_ok=True)
             nom_fichier = os.path.join(DOSSIER_RECUS, f"recu_{groupe}.txt")
             with open(nom_fichier, "w", encoding="utf-8") as f:
@@ -291,7 +289,6 @@ class PharmacieApp(App):
             self.msg_vendre.text = f"Vendu : {qte} x {nom}\nTotal : {total} FCFA\nReçu généré !"
             self.input_qte.text = ""
             
-            # Mettre à jour l'affichage du stock instantanément
             self.spinner_produit.text = "Sélectionnez un produit"
             self.info_produit.text = ""
 
@@ -335,9 +332,86 @@ class PharmacieApp(App):
         scroll.add_widget(grille_stock)
         self.layout.add_widget(scroll)
 
+        # NOUVEAU BOUTON : AJOUTER UN PRODUIT
+        btn_ajouter = bouton("AJOUTER UN PRODUIT", (0, 0.4, 0.8, 1))
+        btn_ajouter.bind(on_press=self.afficher_ajout_produit)
+        self.layout.add_widget(btn_ajouter)
+
         btn_retour = bouton("RETOUR", (0.5, 0.5, 0.5, 1))
         btn_retour.bind(on_press=lambda x: self.afficher_menu())
         self.layout.add_widget(btn_retour)
+
+    # ====================================================
+    # NOUVEL ÉCRAN : AJOUTER UN PRODUIT
+    # ====================================================
+    def afficher_ajout_produit(self, instance):
+        self.layout.clear_widgets()
+
+        self.layout.add_widget(titre("NOUVEAU PRODUIT", 24))
+
+        self.nouveau_nom = champ("Nom du produit")
+        self.layout.add_widget(self.nouveau_nom)
+
+        self.nouveau_prix = champ("Prix de vente (FCFA)", input_filter='float')
+        self.layout.add_widget(self.nouveau_prix)
+
+        self.nouveau_stock = champ("Quantité initiale en stock", input_filter='int')
+        self.layout.add_widget(self.nouveau_stock)
+
+        self.msg_ajout = Label(text="", font_size=sp(16), halign="center")
+        self.layout.add_widget(self.msg_ajout)
+
+        btn_sauver = bouton("ENREGISTRER LE PRODUIT", (0, 0.6, 0, 1))
+        btn_sauver.bind(on_press=self.sauvegarder_nouveau_produit)
+        self.layout.add_widget(btn_sauver)
+
+        btn_retour = bouton("RETOUR", (0.5, 0.5, 0.5, 1))
+        btn_retour.bind(on_press=lambda x: self.afficher_stock(None))
+        self.layout.add_widget(btn_retour)
+
+    def sauvegarder_nouveau_produit(self, instance):
+        nom = self.nouveau_nom.text.strip()
+        prix_str = self.nouveau_prix.text.strip()
+        stock_str = self.nouveau_stock.text.strip()
+
+        if not nom or not prix_str or not stock_str:
+            self.msg_ajout.color = ROUGE
+            self.msg_ajout.text = "Veuillez remplir tous les champs."
+            return
+
+        try:
+            prix = float(prix_str)
+            stock = int(stock_str)
+        except ValueError:
+            self.msg_ajout.color = ROUGE
+            self.msg_ajout.text = "Prix ou stock invalide."
+            return
+
+        try:
+            conn = sqlite3.connect(CHEMIN_DB)
+            c = conn.cursor()
+            
+            # Vérifier si le produit existe déjà
+            c.execute("SELECT id FROM medicaments WHERE LOWER(nom) = ?", (nom.lower(),))
+            if c.fetchone():
+                self.msg_ajout.color = ROUGE
+                self.msg_ajout.text = "Ce produit existe déjà."
+                conn.close()
+                return
+
+            c.execute("INSERT INTO medicaments (nom, prix_vente, stock) VALUES (?, ?, ?)", (nom, prix, stock))
+            conn.commit()
+            conn.close()
+
+            self.msg_ajout.color = VERT
+            self.msg_ajout.text = "Produit ajouté avec succès !"
+            self.nouveau_nom.text = ""
+            self.nouveau_prix.text = ""
+            self.nouveau_stock.text = ""
+
+        except Exception as e:
+            self.msg_ajout.color = ROUGE
+            self.msg_ajout.text = f"Erreur : {str(e)}"
 
     # ====================================================
     # ÉCRAN REÇUS
