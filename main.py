@@ -16,9 +16,6 @@ import os
 from datetime import datetime
 import shutil
 
-
-# -------------------------------------------------
-
 CHEMIN_DB = ""
 DOSSIER_RECUS = ""
 
@@ -46,16 +43,13 @@ class PharmacieApp(App):
         self.afficher_connexion()
         return self.layout
 
-    # ====================================================
-    # CONNEXION
-    # ====================================================
     def afficher_connexion(self):
         self.layout.clear_widgets()
         
-        self.layout.add_widget(Label(text="", size_hint=(1, 0.1))) # Espace
+        self.layout.add_widget(Label(text="", size_hint=(1, 0.1)))
         titre = Label(text="CONNEXION", font_size=sp(30), size_hint=(1, None), height=dp(50), color=(1,1,1,1))
         self.layout.add_widget(titre)
-        self.layout.add_widget(Label(text="", size_hint=(1, 0.1))) # Espace
+        self.layout.add_widget(Label(text="", size_hint=(1, 0.1)))
         
         self.user_input = TextInput(hint_text="Nom d'utilisateur", multiline=False, font_size=sp(18), size_hint=(1, None), height=dp(50), padding_y=(dp(10), dp(10)))
         self.layout.add_widget(self.user_input)
@@ -63,7 +57,7 @@ class PharmacieApp(App):
         self.pass_input = TextInput(hint_text="Mot de passe", password=True, multiline=False, font_size=sp(18), size_hint=(1, None), height=dp(50), padding_y=(dp(10), dp(10)))
         self.layout.add_widget(self.pass_input)
         
-        self.layout.add_widget(Label(text="", size_hint=(1, 0.1))) # Espace
+        self.layout.add_widget(Label(text="", size_hint=(1, 0.1)))
         
         btn_login = Button(text="SE CONNECTER", font_size=sp(20), size_hint=(1, None), height=dp(60), background_color=(0, 0.5, 0, 1), bold=True)
         btn_login.bind(on_press=self.verifier_connexion)
@@ -71,7 +65,7 @@ class PharmacieApp(App):
         
         self.message = Label(text="", font_size=sp(16), color=(1, 0, 0, 1), size_hint=(1, None), height=dp(40))
         self.layout.add_widget(self.message)
-        self.layout.add_widget(Label(text="", size_hint=(1, 0.2))) # Espace
+        self.layout.add_widget(Label(text="", size_hint=(1, 0.2)))
 
     def verifier_connexion(self, instance):
         username = self.user_input.text.strip()
@@ -103,9 +97,6 @@ class PharmacieApp(App):
         except Exception as e:
             self.message.text = f"Erreur : {str(e)}"
 
-    # ====================================================
-    # MENU PRINCIPAL
-    # ====================================================
     def afficher_menu(self):
         self.layout.clear_widgets()
         
@@ -140,9 +131,6 @@ class PharmacieApp(App):
     def deconnexion(self, instance):
         App.get_running_app().stop()
 
-    # ====================================================
-    # ÉCRAN VENDRE
-    # ====================================================
     def afficher_vendre(self, instance):
         self.layout.clear_widgets()
         
@@ -162,7 +150,7 @@ class PharmacieApp(App):
         btn_valider.bind(on_press=self.valider_vente)
         self.layout.add_widget(btn_valider)
         
-        self.layout.add_widget(Label(text="", size_hint=(1, 0.05))) # Espace
+        self.layout.add_widget(Label(text="", size_hint=(1, 0.05)))
         
         btn_retour = Button(text="RETOUR", font_size=sp(18), size_hint=(1, None), height=dp(50), background_color=(0.5, 0.5, 0.5, 1))
         btn_retour.bind(on_press=lambda x: self.afficher_menu())
@@ -247,9 +235,6 @@ class PharmacieApp(App):
         except Exception as e:
             self.msg_vendre.text = f"Erreur : {str(e)}"
 
-    # ====================================================
-    # ÉCRAN STOCK
-    # ====================================================
     def afficher_stock(self, instance):
         self.layout.clear_widgets()
         
@@ -284,9 +269,6 @@ class PharmacieApp(App):
         btn_retour.bind(on_press=lambda x: self.afficher_menu())
         self.layout.add_widget(btn_retour)
 
-    # ====================================================
-    # ÉCRAN REÇUS
-    # ====================================================
     def afficher_recus(self, instance):
         self.layout.clear_widgets()
         
@@ -323,9 +305,6 @@ class PharmacieApp(App):
         btn_retour.bind(on_press=lambda x: self.afficher_menu())
         self.layout.add_widget(btn_retour)
 
-    # ====================================================
-    # ÉCRAN LIRE UN REÇU
-    # ====================================================
     def ouvrir_recu(self, nom_fichier):
         self.layout.clear_widgets()
         
@@ -363,9 +342,6 @@ class PharmacieApp(App):
         btn_retour.bind(on_press=lambda x: self.afficher_recus(None))
         self.layout.add_widget(btn_retour)
 
-    # ====================================================
-    # ÉCRAN PARAMÈTRES
-    # ====================================================
     def afficher_parametres(self, instance):
         self.layout.clear_widgets()
         
@@ -404,7 +380,7 @@ class PharmacieApp(App):
             self.param_inputs[cle] = inp
             grille.add_widget(lbl)
             grille.add_widget(inp)
-            grille.add_widget(Label(text="", size_hint_y=None, height=dp(10))) # Espacement
+            grille.add_widget(Label(text="", size_hint_y=None, height=dp(10)))
             
         scroll.add_widget(grille)
         self.layout.add_widget(scroll)
@@ -416,7 +392,7 @@ class PharmacieApp(App):
         btn_sauver.bind(on_press=self.sauvegarder_parametres)
         self.layout.add_widget(btn_sauver)
         
-        self.layout.add_widget(Label(text="", size_hint=(1, None), height=dp(10))) # Espace
+        self.layout.add_widget(Label(text="", size_hint=(1, None), height=dp(10)))
         
         btn_retour = Button(text="RETOUR", font_size=sp(18), size_hint=(1, None), height=dp(50), background_color=(0.5, 0.5, 0.5, 1))
         btn_retour.bind(on_press=lambda x: self.afficher_menu())
