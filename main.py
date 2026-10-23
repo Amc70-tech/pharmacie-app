@@ -454,4 +454,3 @@ class PharmacieApp(App):
 
 if __name__ == '__main__':
     PharmacieApp().run()
-        
