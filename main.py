@@ -13,7 +13,6 @@ from kivy.uix.gridlayout import GridLayout
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.spinner import Spinner
 from kivy.uix.popup import Popup
-# L'import du FileChooser est déplacé DANS la fonction pour éviter les crashs au démarrage
 import sqlite3
 import hashlib
 import os
@@ -31,6 +30,7 @@ ROUGE = (1, 0.3, 0.3, 1)
 VERT = (0, 1, 0, 1)
 BLEU = (0, 0.4, 0.8, 1)
 ORANGE = (1, 0.5, 0, 1)
+VIOLET = (0.6, 0.2, 0.8, 1)
 
 def preparer_chemins(base):
     os.makedirs(base, exist_ok=True)
@@ -109,6 +109,9 @@ class PharmacieApp(App):
                 h = hashlib.sha256((sel + password).encode()).hexdigest()
                 if h == user["password_hash"]:
                     self.username_courant = username
+                    self.user_input.text = ""
+                    self.pass_input.text = ""
+                    self.message.text = ""
                     self.afficher_menu()
                 else:
                     self.message.text = "Mot de passe incorrect."
@@ -138,23 +141,69 @@ class PharmacieApp(App):
         btn_alertes = Button(text="ALERTES", font_size=sp(18), background_color=ORANGE)
         btn_alertes.bind(on_press=self.afficher_alertes)
         
+        btn_bilan = Button(text="BILAN DU JOUR", font_size=sp(18), background_color=VIOLET)
+        btn_bilan.bind(on_press=self.afficher_bilan)
+        
         btn_params = Button(text="PARAMÈTRES", font_size=sp(18))
         btn_params.bind(on_press=self.afficher_parametres)
 
-        for b in (btn_vendre, btn_stock, btn_recus, btn_alertes, btn_params):
+        for b in (btn_vendre, btn_stock, btn_recus, btn_alertes, btn_bilan, btn_params):
             grille.add_widget(b)
 
         self.layout.add_widget(grille)
         
-        btn_quitter = bouton("QUITTER", (0.8, 0, 0, 1), hauteur=56)
+        btn_quitter = bouton("DÉCONNEXION", (0.8, 0, 0, 1), hauteur=56)
         btn_quitter.bind(on_press=self.deconnexion)
         self.layout.add_widget(btn_quitter)
 
     def deconnexion(self, instance):
-        App.get_running_app().stop()
+        self.username_courant = ""
+        self.panier = []
+        self.afficher_connexion()
 
     # ====================================================
-    # ÉCRAN ALERTES
+    # BILAN DU JOUR
+    # ====================================================
+    def afficher_bilan(self, instance):
+        self.layout.clear_widgets()
+        self.layout.add_widget(titre("BILAN DU JOUR", 24))
+
+        date_auj = datetime.now().strftime("%Y-%m-%d")
+        
+        try:
+            conn = sqlite3.connect(CHEMIN_DB)
+            conn.row_factory = sqlite3.Row
+            c = conn.cursor()
+            
+            c.execute("SELECT SUM(total) as ca, COUNT(DISTINCT groupe) as nb_ventes, SUM(quantite) as nb_articles FROM ventes WHERE date_vente LIKE ?", (f"{date_auj}%",))
+            res = c.fetchone()
+            conn.close()
+
+            ca = res['ca'] if res['ca'] else 0
+            nb_ventes = res['nb_ventes'] if res['nb_ventes'] else 0
+            nb_articles = res['nb_articles'] if res['nb_articles'] else 0
+
+            box_stats = BoxLayout(orientation='vertical', spacing=dp(20), padding=dp(20))
+            
+            lbl_ca = Label(text=f"Chiffre d'Affaires :\n{ca} FCFA", font_size=sp(28), bold=True, color=VERT)
+            lbl_ventes = Label(text=f"Nombre de tickets :\n{nb_ventes}", font_size=sp(22), color=(1,1,1,1))
+            lbl_articles = Label(text=f"Articles vendus :\n{nb_articles}", font_size=sp(22), color=(1,1,1,1))
+
+            box_stats.add_widget(lbl_ca)
+            box_stats.add_widget(lbl_ventes)
+            box_stats.add_widget(lbl_articles)
+
+            self.layout.add_widget(box_stats)
+
+        except Exception as e:
+            self.layout.add_widget(Label(text=f"Erreur : {str(e)}", font_size=sp(16), color=ROUGE))
+
+        btn_retour = bouton("RETOUR", (0.5, 0.5, 0.5, 1), hauteur=50)
+        btn_retour.bind(on_press=lambda x: self.afficher_menu())
+        self.layout.add_widget(btn_retour)
+
+    # ====================================================
+    # ALERTES
     # ====================================================
     def afficher_alertes(self, instance):
         self.layout.clear_widgets()
@@ -202,7 +251,7 @@ class PharmacieApp(App):
         self.layout.add_widget(btn_retour)
 
     # ====================================================
-    # ÉCRAN VENDRE
+    # VENDRE
     # ====================================================
     def afficher_vendre(self, instance):
         self.layout.clear_widgets()
@@ -400,7 +449,7 @@ class PharmacieApp(App):
             if conn: conn.close()
 
     # ====================================================
-    # ÉCRAN STOCK
+    # STOCK
     # ====================================================
     def afficher_stock(self, instance):
         self.layout.clear_widgets()
@@ -617,9 +666,7 @@ class PharmacieApp(App):
 
     def afficher_import_csv(self, instance):
         try:
-            # Importation locale pour éviter le crash au démarrage
             from kivy.uix.filechooser import FileChooserListView
-            
             content = BoxLayout(orientation='vertical', spacing=dp(10))
             filechooser = FileChooserListView(path=App.get_running_app().user_data_dir, filters=['*.csv'])
             content.add_widget(filechooser)
@@ -673,6 +720,9 @@ class PharmacieApp(App):
         btn.bind(on_press=popup.dismiss)
         popup.open()
 
+    # ====================================================
+    # REÇUS
+    # ====================================================
     def afficher_recus(self, instance):
         self.layout.clear_widgets()
         self.layout.add_widget(titre("DERNIERS REÇUS", 24))
@@ -717,12 +767,17 @@ class PharmacieApp(App):
         btn_retour.bind(on_press=lambda x: self.afficher_recus(None))
         self.layout.add_widget(btn_retour)
 
+    # ====================================================
+    # PARAMÈTRES & SAUVEGARDE & UTILISATEURS
+    # ====================================================
     def afficher_parametres(self, instance):
         self.layout.clear_widgets()
         self.layout.add_widget(titre("PARAMÈTRES", 24))
+        
         scroll = ScrollView()
         grille = GridLayout(cols=1, spacing=dp(8), size_hint_y=None)
         grille.bind(minimum_height=grille.setter('height'))
+        
         params = {}
         try:
             conn = sqlite3.connect(CHEMIN_DB)
@@ -734,8 +789,10 @@ class PharmacieApp(App):
             conn.close()
         except Exception:
             pass
+            
         self.param_inputs = {}
         champs = [("nom", "Nom de la pharmacie"), ("adresse", "Adresse"), ("telephone", "Téléphone"), ("email", "Email"), ("nif", "NIF"), ("message", "Message du reçu")]
+        
         for cle, label_txt in champs:
             lbl = Label(text=label_txt, font_size=sp(14), size_hint_y=None, height=dp(28), halign="left", color=(1, 1, 1, 1))
             lbl.bind(width=lambda inst, w: setattr(inst, 'text_size', (w, None)))
@@ -743,13 +800,27 @@ class PharmacieApp(App):
             self.param_inputs[cle] = inp
             grille.add_widget(lbl)
             grille.add_widget(inp)
+            
         scroll.add_widget(grille)
         self.layout.add_widget(scroll)
+        
         self.msg_params = Label(text="", font_size=sp(14), size_hint=(1, None), height=dp(30))
         self.layout.add_widget(self.msg_params)
-        btn_sauver = bouton("ENREGISTRER", (0, 0.6, 0, 1), hauteur=56)
+        
+        btn_sauver = bouton("ENREGISTRER LES PARAMÈTRES", (0, 0.6, 0, 1), hauteur=50)
         btn_sauver.bind(on_press=self.sauvegarder_parametres)
         self.layout.add_widget(btn_sauver)
+
+        # Bouton Gestion des utilisateurs
+        btn_users = bouton("GÉRER LES UTILISATEURS", ORANGE, hauteur=50)
+        btn_users.bind(on_press=self.afficher_utilisateurs)
+        self.layout.add_widget(btn_users)
+
+        # Bouton Sauvegarde de la base
+        btn_backup = bouton("SAUVEGARDER LA BASE", BLEU, hauteur=50)
+        btn_backup.bind(on_press=self.sauvegarder_base)
+        self.layout.add_widget(btn_backup)
+
         btn_retour = bouton("RETOUR", (0.5, 0.5, 0.5, 1), hauteur=50)
         btn_retour.bind(on_press=lambda x: self.afficher_menu())
         self.layout.add_widget(btn_retour)
@@ -769,6 +840,127 @@ class PharmacieApp(App):
         except Exception as e:
             self.msg_params.color = ROUGE
             self.msg_params.text = f"Erreur : {str(e)}"
+
+    def sauvegarder_base(self, instance):
+        try:
+            date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+            nom_sauvegarde = f"sauvegarde_pharmacie_{date_str}.db"
+            chemin_sauvegarde = os.path.join(App.get_running_app().user_data_dir, nom_sauvegarde)
+            shutil.copy(CHEMIN_DB, chemin_sauvegarde)
+            self._show_popup("Sauvegarde réussie", f"Votre base de données a été copiée ici :\n\n{chemin_sauvegarde}")
+        except Exception as e:
+            self._show_popup("Erreur de sauvegarde", str(e))
+
+    # ====================================================
+    # GESTION DES UTILISATEURS
+    # ====================================================
+    def afficher_utilisateurs(self, instance):
+        self.layout.clear_widgets()
+        self.layout.add_widget(titre("GESTION DES UTILISATEURS", 22))
+
+        # Liste pour supprimer
+        self.user_spinner = Spinner(text="Sélectionnez un utilisateur", values=[], font_size=sp(16), size_hint=(1, None), height=dp(45), background_color=(0.2, 0.2, 0.2, 1))
+        self.maj_liste_utilisateurs()
+        self.layout.add_widget(self.user_spinner)
+
+        btn_suppr = bouton("SUPPRIMER CET UTILISATEUR", ROUGE, hauteur=50)
+        btn_suppr.bind(on_press=self.supprimer_utilisateur)
+        self.layout.add_widget(btn_suppr)
+
+        self.layout.add_widget(Label(text="Ajouter un nouvel utilisateur", font_size=sp(16), bold=True, color=VERT))
+        
+        self.new_user_input = champ("Nouveau nom d'utilisateur")
+        self.layout.add_widget(self.new_user_input)
+        
+        self.new_pass_input = champ("Nouveau mot de passe", password=True)
+        self.layout.add_widget(self.new_pass_input)
+        
+        self.msg_users = Label(text="", font_size=sp(14), halign="center")
+        self.layout.add_widget(self.msg_users)
+
+        btn_ajouter = bouton("AJOUTER L'UTILISATEUR", (0, 0.5, 0, 1), hauteur=50)
+        btn_ajouter.bind(on_press=self.ajouter_utilisateur)
+        self.layout.add_widget(btn_ajouter)
+
+        btn_retour = bouton("RETOUR", (0.5, 0.5, 0.5, 1), hauteur=50)
+        btn_retour.bind(on_press=lambda x: self.afficher_parametres(None))
+        self.layout.add_widget(btn_retour)
+
+    def maj_liste_utilisateurs(self):
+        try:
+            conn = sqlite3.connect(CHEMIN_DB)
+            c = conn.cursor()
+            c.execute("SELECT username FROM utilisateurs")
+            users = [row[0] for row in c.fetchall()]
+            conn.close()
+            self.user_spinner.values = users
+        except Exception:
+            pass
+
+    def ajouter_utilisateur(self, instance):
+        username = self.new_user_input.text.strip()
+        password = self.new_pass_input.text.strip()
+
+        if not username or not password:
+            self.msg_users.color = ROUGE
+            self.msg_users.text = "Veuillez remplir les deux champs."
+            return
+
+        try:
+            conn = sqlite3.connect(CHEMIN_DB)
+            c = conn.cursor()
+            # Vérifier s'il existe déjà
+            c.execute("SELECT id FROM utilisateurs WHERE username=?", (username,))
+            if c.fetchone():
+                self.msg_users.color = ROUGE
+                self.msg_users.text = "Ce nom d'utilisateur existe déjà."
+                conn.close()
+                return
+
+            # Générer un sel aléatoire et hacher le mot de passe
+            sel = os.urandom(16).hex()
+            mdp_hash = hashlib.sha256((sel + password).encode()).hexdigest()
+
+            c.execute("INSERT INTO utilisateurs (username, sel, password_hash) VALUES (?, ?, ?)", (username, sel, mdp_hash))
+            conn.commit()
+            conn.close()
+
+            self.msg_users.color = VERT
+            self.msg_users.text = f"Utilisateur '{username}' ajouté !"
+            self.new_user_input.text = ""
+            self.new_pass_input.text = ""
+            self.maj_liste_utilisateurs()
+
+        except Exception as e:
+            self.msg_users.color = ROUGE
+            self.msg_users.text = f"Erreur : {str(e)}"
+
+    def supprimer_utilisateur(self, instance):
+        username = self.user_spinner.text
+        if not username or username == "Sélectionnez un utilisateur":
+            self.msg_users.color = ROUGE
+            self.msg_users.text = "Sélectionnez un utilisateur à supprimer."
+            return
+
+        if username == self.username_courant:
+            self.msg_users.color = ROUGE
+            self.msg_users.text = "Vous ne pouvez pas supprimer votre propre compte !"
+            return
+
+        try:
+            conn = sqlite3.connect(CHEMIN_DB)
+            c = conn.cursor()
+            c.execute("DELETE FROM utilisateurs WHERE username=?", (username,))
+            conn.commit()
+            conn.close()
+            
+            self.msg_users.color = VERT
+            self.msg_users.text = f"Utilisateur '{username}' supprimé."
+            self.user_spinner.text = "Sélectionnez un utilisateur"
+            self.maj_liste_utilisateurs()
+        except Exception as e:
+            self.msg_users.color = ROUGE
+            self.msg_users.text = f"Erreur : {str(e)}"
 
 if __name__ == '__main__':
     PharmacieApp().run()
