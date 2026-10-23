@@ -9,11 +9,15 @@ from kivy.uix.label import Label
 from kivy.uix.textinput import TextInput
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.scrollview import ScrollView
+from kivy.metrics import dp, sp
 import sqlite3
 import hashlib
 import os
 from datetime import datetime
 import shutil
+
+# --- BLOC CORRIGÉ POUR L'ORIENTATION ANDROID ---
+try:
     from android import mActivity
     from jnius import autoclass
     ActivityInfo = autoclass('android.content.pm.ActivityInfo')
@@ -21,26 +25,12 @@ import shutil
 except Exception as e:
     print("Pas sur Android, on ignore l'orientation :", e)
 # -------------------------------------------------
-from kivy.app import App
-from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.button import Button
-from kivy.uix.label import Label
-from kivy.uix.textinput import TextInput
-from kivy.uix.gridlayout import GridLayout
-from kivy.uix.scrollview import ScrollView
-import sqlite3
-import hashlib
-import os
-from datetime import datetime
-
-import shutil
 
 CHEMIN_DB = ""
 DOSSIER_RECUS = ""
 
 def preparer_chemins():
     try:
-        from kivy.app import App
         base = App.get_running_app().user_data_dir
     except Exception:
         base = os.path.dirname(os.path.abspath(__file__))
@@ -53,11 +43,12 @@ def preparer_chemins():
     dossier_recus = os.path.join(base, "recus")
     os.makedirs(dossier_recus, exist_ok=True)
     return chemin_db, dossier_recus
+
 class PharmacieApp(App):
     def build(self):
         global CHEMIN_DB, DOSSIER_RECUS
         CHEMIN_DB, DOSSIER_RECUS = preparer_chemins()
-        self.layout = BoxLayout(orientation='vertical', padding=30, spacing=20)
+        self.layout = BoxLayout(orientation='vertical', padding=dp(20), spacing=dp(15))
         self.username_courant = ""
         self.afficher_connexion()
         return self.layout
@@ -68,21 +59,26 @@ class PharmacieApp(App):
     def afficher_connexion(self):
         self.layout.clear_widgets()
         
-        titre = Label(text="CONNEXION", font_size=30, size_hint=(1, 0.2))
+        self.layout.add_widget(Label(text="", size_hint=(1, 0.1))) # Espace
+        titre = Label(text="CONNEXION", font_size=sp(30), size_hint=(1, None), height=dp(50), color=(1,1,1,1))
         self.layout.add_widget(titre)
+        self.layout.add_widget(Label(text="", size_hint=(1, 0.1))) # Espace
         
-        self.user_input = TextInput(hint_text="Nom d'utilisateur", multiline=False, font_size=20, size_hint=(1, 0.1))
+        self.user_input = TextInput(hint_text="Nom d'utilisateur", multiline=False, font_size=sp(18), size_hint=(1, None), height=dp(50), padding_y=(dp(10), dp(10)))
         self.layout.add_widget(self.user_input)
         
-        self.pass_input = TextInput(hint_text="Mot de passe", password=True, multiline=False, font_size=20, size_hint=(1, 0.1))
+        self.pass_input = TextInput(hint_text="Mot de passe", password=True, multiline=False, font_size=sp(18), size_hint=(1, None), height=dp(50), padding_y=(dp(10), dp(10)))
         self.layout.add_widget(self.pass_input)
         
-        btn_login = Button(text="SE CONNECTER", font_size=20, size_hint=(1, 0.15), background_color=(0, 0.5, 0, 1))
+        self.layout.add_widget(Label(text="", size_hint=(1, 0.1))) # Espace
+        
+        btn_login = Button(text="SE CONNECTER", font_size=sp(20), size_hint=(1, None), height=dp(60), background_color=(0, 0.5, 0, 1), bold=True)
         btn_login.bind(on_press=self.verifier_connexion)
         self.layout.add_widget(btn_login)
         
-        self.message = Label(text="", font_size=18, color=(1, 0, 0, 1), size_hint=(1, 0.1))
+        self.message = Label(text="", font_size=sp(16), color=(1, 0, 0, 1), size_hint=(1, None), height=dp(40))
         self.layout.add_widget(self.message)
+        self.layout.add_widget(Label(text="", size_hint=(1, 0.2))) # Espace
 
     def verifier_connexion(self, instance):
         username = self.user_input.text.strip()
@@ -120,21 +116,21 @@ class PharmacieApp(App):
     def afficher_menu(self):
         self.layout.clear_widgets()
         
-        titre = Label(text=f"PHARMACIE\n{self.username_courant}", font_size=30, size_hint=(1, 0.2))
+        titre = Label(text=f"PHARMACIE\n{self.username_courant}", font_size=sp(26), size_hint=(1, 0.2), color=(1,1,1,1))
         self.layout.add_widget(titre)
         
-        grille = GridLayout(cols=2, spacing=20, size_hint=(1, 0.6))
+        grille = GridLayout(cols=2, spacing=dp(15), size_hint=(1, 0.6))
         
-        btn_vendre = Button(text="VENDRE", font_size=24, background_color=(0, 0.6, 0, 1))
+        btn_vendre = Button(text="VENDRE", font_size=sp(20), background_color=(0, 0.6, 0, 1), bold=True)
         btn_vendre.bind(on_press=self.afficher_vendre)
         
-        btn_stock = Button(text="STOCK", font_size=24)
+        btn_stock = Button(text="STOCK", font_size=sp(20), background_color=(0.2, 0.2, 0.2, 1))
         btn_stock.bind(on_press=self.afficher_stock)
         
-        btn_recus = Button(text="REÇUS", font_size=24)
+        btn_recus = Button(text="REÇUS", font_size=sp(20), background_color=(0.2, 0.2, 0.2, 1))
         btn_recus.bind(on_press=self.afficher_recus)
         
-        btn_params = Button(text="PARAMÈTRES", font_size=24)
+        btn_params = Button(text="PARAMÈTRES", font_size=sp(20), background_color=(0.2, 0.2, 0.2, 1))
         btn_params.bind(on_press=self.afficher_parametres)
         
         grille.add_widget(btn_vendre)
@@ -144,7 +140,7 @@ class PharmacieApp(App):
         
         self.layout.add_widget(grille)
         
-        btn_quitter = Button(text="QUITTER", font_size=20, size_hint=(1, 0.15), background_color=(0.8, 0, 0, 1))
+        btn_quitter = Button(text="DÉCONNEXION", font_size=sp(18), size_hint=(1, None), height=dp(50), background_color=(0.8, 0, 0, 1))
         btn_quitter.bind(on_press=self.deconnexion)
         self.layout.add_widget(btn_quitter)
         
@@ -157,23 +153,25 @@ class PharmacieApp(App):
     def afficher_vendre(self, instance):
         self.layout.clear_widgets()
         
-        titre = Label(text="VENDRE", font_size=30, size_hint=(1, 0.1))
+        titre = Label(text="VENDRE", font_size=sp(28), size_hint=(1, None), height=dp(60), color=(1,1,1,1))
         self.layout.add_widget(titre)
         
-        self.input_nom = TextInput(hint_text="Nom du produit (ex: paracetamol)", multiline=False, font_size=20, size_hint=(1, 0.1))
+        self.input_nom = TextInput(hint_text="Nom du produit", multiline=False, font_size=sp(18), size_hint=(1, None), height=dp(50), padding_y=(dp(10), dp(10)))
         self.layout.add_widget(self.input_nom)
         
-        self.input_qte = TextInput(hint_text="Quantité", multiline=False, font_size=20, size_hint=(1, 0.1), input_filter='int')
+        self.input_qte = TextInput(hint_text="Quantité", multiline=False, font_size=sp(18), size_hint=(1, None), height=dp(50), input_filter='int', padding_y=(dp(10), dp(10)))
         self.layout.add_widget(self.input_qte)
         
-        self.msg_vendre = Label(text="", font_size=18, size_hint=(1, 0.2))
+        self.msg_vendre = Label(text="", font_size=sp(16), size_hint=(1, 0.3), color=(1,1,1,1))
         self.layout.add_widget(self.msg_vendre)
         
-        btn_valider = Button(text="VALIDER LA VENTE", font_size=20, size_hint=(1, 0.15), background_color=(0, 0.5, 0, 1))
+        btn_valider = Button(text="VALIDER LA VENTE", font_size=sp(20), size_hint=(1, None), height=dp(60), background_color=(0, 0.5, 0, 1), bold=True)
         btn_valider.bind(on_press=self.valider_vente)
         self.layout.add_widget(btn_valider)
         
-        btn_retour = Button(text="RETOUR", font_size=20, size_hint=(1, 0.15), background_color=(0.5, 0.5, 0.5, 1))
+        self.layout.add_widget(Label(text="", size_hint=(1, 0.05))) # Espace
+        
+        btn_retour = Button(text="RETOUR", font_size=sp(18), size_hint=(1, None), height=dp(50), background_color=(0.5, 0.5, 0.5, 1))
         btn_retour.bind(on_press=lambda x: self.afficher_menu())
         self.layout.add_widget(btn_retour)
 
@@ -217,7 +215,6 @@ class PharmacieApp(App):
             c.execute("INSERT INTO ventes(date_vente,medicament,quantite,prix_unitaire,total,groupe) VALUES(?,?,?,?,?,?)",
                       (date_v, produit["nom"], qte, produit["prix_vente"], total, groupe))
             
-            # LECTURE DES PARAMÈTRES POUR LE REÇU
             c.execute("SELECT cle, valeur FROM parametres")
             params = {row["cle"]: row["valeur"] for row in c.fetchall()}
             nom_pharma = params.get("nom", "PHARMACIE")
@@ -228,7 +225,6 @@ class PharmacieApp(App):
             conn.commit()
             conn.close()
             
-            # Génération du reçu
             if not os.path.exists(DOSSIER_RECUS):
                 os.makedirs(DOSSIER_RECUS)
             
@@ -264,11 +260,11 @@ class PharmacieApp(App):
     def afficher_stock(self, instance):
         self.layout.clear_widgets()
         
-        titre = Label(text="ETAT DU STOCK", font_size=30, size_hint=(1, 0.1))
+        titre = Label(text="ETAT DU STOCK", font_size=sp(28), size_hint=(1, None), height=dp(60), color=(1,1,1,1))
         self.layout.add_widget(titre)
         
-        scroll = ScrollView(size_hint=(1, 0.75))
-        grille_stock = GridLayout(cols=1, spacing=5, size_hint_y=None)
+        scroll = ScrollView(size_hint=(1, 0.8))
+        grille_stock = GridLayout(cols=1, spacing=dp(5), size_hint_y=None)
         grille_stock.bind(minimum_height=grille_stock.setter('height'))
         
         try:
@@ -281,17 +277,17 @@ class PharmacieApp(App):
             
             for p in produits:
                 texte = f"{p['nom'][:25]} | Stock: {p['stock']} | {p['prix_vente']} F"
-                lbl = Label(text=texte, font_size=16, size_hint_y=None, height=40, color=(1,1,1,1))
+                lbl = Label(text=texte, font_size=sp(16), size_hint_y=None, height=dp(40), color=(1,1,1,1))
                 grille_stock.add_widget(lbl)
                 
         except Exception as e:
-            lbl = Label(text=f"Erreur : {str(e)}", font_size=16)
+            lbl = Label(text=f"Erreur : {str(e)}", font_size=sp(16), color=(1,0,0,1))
             grille_stock.add_widget(lbl)
             
         scroll.add_widget(grille_stock)
         self.layout.add_widget(scroll)
         
-        btn_retour = Button(text="RETOUR", font_size=20, size_hint=(1, 0.15), background_color=(0.5, 0.5, 0.5, 1))
+        btn_retour = Button(text="RETOUR", font_size=sp(18), size_hint=(1, None), height=dp(50), background_color=(0.5, 0.5, 0.5, 1))
         btn_retour.bind(on_press=lambda x: self.afficher_menu())
         self.layout.add_widget(btn_retour)
 
@@ -301,36 +297,36 @@ class PharmacieApp(App):
     def afficher_recus(self, instance):
         self.layout.clear_widgets()
         
-        titre = Label(text="DERNIERS REÇUS", font_size=30, size_hint=(1, 0.1))
+        titre = Label(text="DERNIERS REÇUS", font_size=sp(28), size_hint=(1, None), height=dp(60), color=(1,1,1,1))
         self.layout.add_widget(titre)
         
-        scroll = ScrollView(size_hint=(1, 0.75))
-        grille_recus = GridLayout(cols=1, spacing=5, size_hint_y=None)
+        scroll = ScrollView(size_hint=(1, 0.8))
+        grille_recus = GridLayout(cols=1, spacing=dp(5), size_hint_y=None)
         grille_recus.bind(minimum_height=grille_recus.setter('height'))
         
         try:
             if os.path.exists(DOSSIER_RECUS):
                 fichiers = sorted([f for f in os.listdir(DOSSIER_RECUS) if f.endswith(".txt")], reverse=True)
                 if not fichiers:
-                    lbl = Label(text="Aucun reçu pour le moment.\nFaites une vente !", font_size=18)
+                    lbl = Label(text="Aucun reçu pour le moment.", font_size=sp(18), color=(1,1,1,1))
                     grille_recus.add_widget(lbl)
                 else:
                     for f in fichiers[:20]:
-                        btn = Button(text=f, size_hint_y=None, height=50, font_size=14)
+                        btn = Button(text=f, size_hint_y=None, height=dp(50), font_size=sp(14))
                         btn.bind(on_press=lambda x, nom_fichier=f: self.ouvrir_recu(nom_fichier))
                         grille_recus.add_widget(btn)
             else:
-                lbl = Label(text="Aucun reçu. Faites une vente !", font_size=18)
+                lbl = Label(text="Aucun reçu. Faites une vente !", font_size=sp(18), color=(1,1,1,1))
                 grille_recus.add_widget(lbl)
                 
         except Exception as e:
-            lbl = Label(text=f"Erreur : {str(e)}", font_size=16)
+            lbl = Label(text=f"Erreur : {str(e)}", font_size=sp(16), color=(1,0,0,1))
             grille_recus.add_widget(lbl)
             
         scroll.add_widget(grille_recus)
         self.layout.add_widget(scroll)
         
-        btn_retour = Button(text="RETOUR", font_size=20, size_hint=(1, 0.15), background_color=(0.5, 0.5, 0.5, 1))
+        btn_retour = Button(text="RETOUR", font_size=sp(18), size_hint=(1, None), height=dp(50), background_color=(0.5, 0.5, 0.5, 1))
         btn_retour.bind(on_press=lambda x: self.afficher_menu())
         self.layout.add_widget(btn_retour)
 
@@ -340,10 +336,10 @@ class PharmacieApp(App):
     def ouvrir_recu(self, nom_fichier):
         self.layout.clear_widgets()
         
-        titre = Label(text="DÉTAIL DU REÇU", font_size=24, size_hint=(1, 0.1))
+        titre = Label(text="DÉTAIL DU REÇU", font_size=sp(24), size_hint=(1, None), height=dp(60), color=(1,1,1,1))
         self.layout.add_widget(titre)
         
-        scroll = ScrollView(size_hint=(1, 0.75))
+        scroll = ScrollView(size_hint=(1, 0.8))
         
         chemin = os.path.join(DOSSIER_RECUS, nom_fichier)
         try:
@@ -354,9 +350,9 @@ class PharmacieApp(App):
             
         lbl_texte = Label(
             text=contenu, 
-            font_size=15, 
+            font_size=sp(15), 
             size_hint_y=None, 
-            text_size=(self.layout.width - 60, None),
+            text_size=(self.layout.width - dp(40), None),
             halign="left", 
             valign="top",
             color=(1, 1, 1, 1)
@@ -370,7 +366,7 @@ class PharmacieApp(App):
         scroll.add_widget(lbl_texte)
         self.layout.add_widget(scroll)
         
-        btn_retour = Button(text="RETOUR", font_size=20, size_hint=(1, 0.15), background_color=(0.5, 0.5, 0.5, 1))
+        btn_retour = Button(text="RETOUR", font_size=sp(18), size_hint=(1, None), height=dp(50), background_color=(0.5, 0.5, 0.5, 1))
         btn_retour.bind(on_press=lambda x: self.afficher_recus(None))
         self.layout.add_widget(btn_retour)
 
@@ -380,11 +376,11 @@ class PharmacieApp(App):
     def afficher_parametres(self, instance):
         self.layout.clear_widgets()
         
-        titre = Label(text="PARAMÈTRES", font_size=30, size_hint=(1, 0.1))
+        titre = Label(text="PARAMÈTRES", font_size=sp(28), size_hint=(1, None), height=dp(60), color=(1,1,1,1))
         self.layout.add_widget(titre)
         
-        scroll = ScrollView(size_hint=(1, 0.65))
-        grille = GridLayout(cols=1, spacing=10, size_hint_y=None)
+        scroll = ScrollView(size_hint=(1, 0.75))
+        grille = GridLayout(cols=1, spacing=dp(5), size_hint_y=None)
         grille.bind(minimum_height=grille.setter('height'))
         
         params = {}
@@ -410,23 +406,26 @@ class PharmacieApp(App):
         ]
         
         for cle, label_txt in champs:
-            lbl = Label(text=label_txt, size_hint_y=None, height=30, color=(1,1,1,1))
-            inp = TextInput(text=params.get(cle, ""), multiline=False, size_hint_y=None, height=50, font_size=18)
+            lbl = Label(text=label_txt, size_hint_y=None, height=dp(30), font_size=sp(14), color=(0.8, 0.8, 0.8, 1))
+            inp = TextInput(text=params.get(cle, ""), multiline=False, size_hint_y=None, height=dp(45), font_size=sp(16), padding_y=(dp(10), dp(10)))
             self.param_inputs[cle] = inp
             grille.add_widget(lbl)
             grille.add_widget(inp)
+            grille.add_widget(Label(text="", size_hint_y=None, height=dp(10))) # Espacement
             
         scroll.add_widget(grille)
         self.layout.add_widget(scroll)
         
-        self.msg_params = Label(text="", font_size=16, size_hint=(1, 0.05))
+        self.msg_params = Label(text="", font_size=sp(16), size_hint=(1, None), height=dp(30))
         self.layout.add_widget(self.msg_params)
         
-        btn_sauver = Button(text="ENREGISTRER", font_size=20, size_hint=(1, 0.1), background_color=(0, 0.6, 0, 1))
+        btn_sauver = Button(text="ENREGISTRER", font_size=sp(18), size_hint=(1, None), height=dp(50), background_color=(0, 0.6, 0, 1), bold=True)
         btn_sauver.bind(on_press=self.sauvegarder_parametres)
         self.layout.add_widget(btn_sauver)
         
-        btn_retour = Button(text="RETOUR", font_size=20, size_hint=(1, 0.1), background_color=(0.5, 0.5, 0.5, 1))
+        self.layout.add_widget(Label(text="", size_hint=(1, None), height=dp(10))) # Espace
+        
+        btn_retour = Button(text="RETOUR", font_size=sp(18), size_hint=(1, None), height=dp(50), background_color=(0.5, 0.5, 0.5, 1))
         btn_retour.bind(on_press=lambda x: self.afficher_menu())
         self.layout.add_widget(btn_retour)
 
