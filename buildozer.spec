@@ -1,5 +1,5 @@
 [app]
-title = Pharmacie
+title = Dépôt Pharmaceutique
 package.name = pharmacie
 package.domain = org.monentreprise
 source.dir = .
