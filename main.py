@@ -226,6 +226,8 @@ class PharmacieApp(App):
             c.execute("SELECT cle, valeur FROM parametres")
             params = {row["cle"]: row["valeur"] for row in c.fetchall()}
             nom_depot = params.get("nom", "DÉPÔT PHARMACEUTIQUE")
+            import re
+            mon_depot = re.sub(r"(?i)^\s*pharmacie\s+", "", mon_depot).strip()
             message_recu = params.get("message", "Merci de votre visite !")
             adresse = params.get("adresse", "")
             telephone = params.get("telephone", "")
