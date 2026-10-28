@@ -154,23 +154,14 @@ def lister_medicaments(chemin_db, recherche=""):
     return rows
 
 
-def enregistrer_vente(chemin_db, produit_id, qte, client=""):
-    """Enregistre la vente et met à jour le stock. Lève ValueError si impossible."""
+def enregistrer_vente_panier(chemin_db, lignes, client=""):
+    """lignes = [(produit_id, quantite), ...] : une seule vente, un seul reçu.
+    Tout est enregistré ou rien. Lève ValueError si impossible."""
+    if not lignes:
+        raise ValueError("Le panier est vide.")
     conn = connexion(chemin_db)
     try:
         c = conn.cursor()
-        c.execute("SELECT * FROM medicaments WHERE id=?", (produit_id,))
-        produit = c.fetchone()
-        if produit is None:
-            raise ValueError("Produit introuvable.")
-        stock = produit["stock"] or 0
-        if qte <= 0:
-            raise ValueError("Quantité invalide.")
-        if stock < qte:
-            raise ValueError(f"Stock insuffisant ({stock} dispo).")
-        prix = produit["prix_vente"] or 0
-        total = qte * prix
-
         maintenant = datetime.now()
         date_v = maintenant.strftime("%Y-%m-%d %H:%M")
         base_groupe = maintenant.strftime("V%Y%m%d_%H%M%S")
@@ -179,12 +170,25 @@ def enregistrer_vente(chemin_db, produit_id, qte, client=""):
             n += 1
             groupe = f"{base_groupe}_{n}"
 
-        c.execute("UPDATE medicaments SET stock=? WHERE id=?", (stock - qte, produit_id))
-        c.execute("INSERT INTO ventes(date_vente,medicament,quantite,prix_unitaire,total,groupe,client) "
-                  "VALUES(?,?,?,?,?,?,?)",
-                  (date_v, produit["nom"], qte, prix, total, groupe, client))
+        details = []
+        for produit_id, qte in lignes:
+            if qte <= 0:
+                raise ValueError("Quantité invalide.")
+            produit = c.execute("SELECT * FROM medicaments WHERE id=?", (produit_id,)).fetchone()
+            if produit is None:
+                raise ValueError("Produit introuvable.")
+            stock = produit["stock"] or 0
+            if stock < qte:
+                raise ValueError(f"Stock insuffisant pour {produit['nom']} ({stock} dispo).")
+            prix = produit["prix_vente"] or 0
+            total = qte * prix
+            c.execute("UPDATE medicaments SET stock=? WHERE id=?", (stock - qte, produit_id))
+            c.execute("INSERT INTO ventes(date_vente,medicament,quantite,prix_unitaire,total,groupe,client) "
+                      "VALUES(?,?,?,?,?,?,?)",
+                      (date_v, produit["nom"], qte, prix, total, groupe, client))
+            details.append({"nom": produit["nom"], "qte": qte, "prix": prix, "total": total})
         conn.commit()
-        return {"nom": produit["nom"], "qte": qte, "prix": prix, "total": total,
+        return {"lignes": details, "total": sum(d["total"] for d in details),
                 "groupe": groupe, "date": date_v, "client": client}
     except Exception:
         conn.rollback()
@@ -194,7 +198,7 @@ def enregistrer_vente(chemin_db, produit_id, qte, client=""):
 
 
 def construire_recu(params, vente):
-    """Texte du reçu. Le nom du dépôt n'apparaît qu'une seule fois."""
+    """Texte du reçu (plusieurs produits). Le nom du dépôt n'apparaît qu'une seule fois."""
     nom = normaliser_nom(params.get("nom", ""))
     vus = {sans_accents(nom).lower()}
     ligne_eq = "=" * LARGEUR_RECU
@@ -212,11 +216,12 @@ def construire_recu(params, vente):
             f"Date : {vente['date']}"]
     if vente.get("client"):
         out.append(f"Client : {vente['client']}")
+    out.append(ligne_tr)
+    for i, l in enumerate(vente["lignes"], start=1):
+        out.append(f"{i}. {l['nom']}")
+        out.append(f"      {l['qte']} x {fmt_aff(l['prix'])} = {fmt_aff(l['total'])} FCFA")
     out += [ligne_tr,
-            f"Produit : {vente['nom']}",
-            f"Quantité : {vente['qte']}",
-            f"Prix U : {fmt_aff(vente['prix'])} FCFA",
-            ligne_tr,
+            f"Articles : {sum(l['qte'] for l in vente['lignes'])}",
             f"TOTAL : {fmt_aff(vente['total'])} FCFA",
             ligne_eq,
             (params.get("message") or "Merci de votre visite !")]
@@ -459,6 +464,24 @@ class Plateforme:
         except Exception as e:
             print("Liaison activité impossible :", e)
 
+    # ---------- Écran toujours en portrait ----------
+    def forcer_portrait(self):
+        if not self.android:
+            return
+        try:
+            from android.runnable import run_on_ui_thread
+            from jnius import autoclass
+
+            @run_on_ui_thread
+            def appliquer():
+                PythonActivity = autoclass('org.kivy.android.PythonActivity')
+                ActivityInfo = autoclass('android.content.pm.ActivityInfo')
+                PythonActivity.mActivity.setRequestedOrientation(
+                    ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
+            appliquer()
+        except Exception as e:
+            print("Orientation non forcée :", e)
+
     # ---------- Partage de texte (WhatsApp, SMS, email...) ----------
     def partager_texte(self, texte, titre="Partager"):
         """Retourne True si la fenêtre de partage a été ouverte, False si le texte a seulement été copié."""
@@ -606,9 +629,9 @@ def bouton(texte, couleur=None, hauteur=56, taille=18):
     return b
 
 
-def champ(hint, **kw):
+def champ(hint, hauteur=50, **kw):
     return TextInput(hint_text=hint, multiline=False, font_size=sp(18),
-                     size_hint=(1, None), height=dp(50), **kw)
+                     size_hint=(1, None), height=dp(hauteur), **kw)
 
 
 def etiquette(texte="", taille=14, hauteur=None, halign="left", couleur=BLANC):
@@ -638,16 +661,18 @@ class PharmacieApp(App):
         global CHEMIN_DB, DOSSIER_RECUS, DOSSIER_EXPORTS
         CHEMIN_DB, DOSSIER_RECUS, DOSSIER_EXPORTS = preparer_chemins(self.user_data_dir)
         migrer_base(CHEMIN_DB)
-        self.layout = BoxLayout(orientation='vertical', padding=dp(16), spacing=dp(10))
+        self.layout = BoxLayout(orientation='vertical', padding=dp(12), spacing=dp(8))
         self.username_courant = ""
         self._medocs_map = {}
         self._recu_courant = ""
+        self.panier = []
         self.afficher_connexion()
         Window.bind(on_keyboard=self._touche)
         return self.layout
 
     def on_start(self):
         PF.lier()
+        PF.forcer_portrait()
 
     def on_pause(self):
         # Indispensable : l'app reste en vie quand on ouvre le partage ou le sélecteur de fichiers
@@ -742,40 +767,63 @@ class PharmacieApp(App):
         App.get_running_app().stop()
 
     # ====================================================
-    # ÉCRAN VENDRE (liste déroulante + nom du client)
+    # ÉCRAN VENDRE (liste déroulante + panier + nom du client)
     # ====================================================
     def afficher_vendre(self, instance=None):
         self.layout.clear_widgets()
-        self.layout.add_widget(titre("VENDRE", 22, 50))
 
-        self.input_recherche = champ("Rechercher un médicament...")
+        entete = BoxLayout(size_hint=(1, None), height=dp(44), spacing=dp(8))
+        btn_menu = Button(text="< MENU", font_size=sp(14), size_hint=(0.3, 1),
+                          background_color=(0.5, 0.5, 0.5, 1))
+        btn_menu.bind(on_press=self.afficher_menu)
+        entete.add_widget(btn_menu)
+        entete.add_widget(Label(text="VENDRE", font_size=sp(20), bold=True))
+        self.layout.add_widget(entete)
+
+        self.input_recherche = champ("Rechercher un médicament...", 46)
         self.layout.add_widget(self.input_recherche)
 
         self.spin_medoc = Spinner(text=TEXTE_CHOIX, values=[], font_size=sp(16),
-                                  size_hint=(1, None), height=dp(52), option_cls=OptionListe)
+                                  size_hint=(1, None), height=dp(50), option_cls=OptionListe)
         self.layout.add_widget(self.spin_medoc)
 
-        self.lbl_info = etiquette("", 14, 26, "center")
-        self.layout.add_widget(self.lbl_info)
+        ligne_ajout = BoxLayout(size_hint=(1, None), height=dp(50), spacing=dp(8))
+        self.input_qte = TextInput(hint_text="Qté", multiline=False, input_filter='int',
+                                   font_size=sp(18), size_hint=(0.3, 1), padding=[dp(8), dp(13)])
+        btn_ajouter = Button(text="AJOUTER AU PANIER", font_size=sp(15), size_hint=(0.7, 1),
+                             background_color=(0.1, 0.4, 0.8, 1))
+        btn_ajouter.bind(on_press=self.ajouter_panier)
+        ligne_ajout.add_widget(self.input_qte)
+        ligne_ajout.add_widget(btn_ajouter)
+        self.layout.add_widget(ligne_ajout)
 
-        self.input_qte = champ("Quantité", input_filter='int')
-        self.layout.add_widget(self.input_qte)
-
-        self.input_client = champ("Nom du client (facultatif)")
-        self.layout.add_widget(self.input_client)
-
-        self.msg_vendre = etiquette("", 15, None, "center")
+        self.msg_vendre = etiquette("", 14, 44, "center")
         self.layout.add_widget(self.msg_vendre)
 
-        btn_valider = bouton("VALIDER LA VENTE", (0, 0.5, 0, 1))
+        scroll = ScrollView()
+        self.panier_grille = GridLayout(cols=1, spacing=dp(4), size_hint_y=None)
+        self.panier_grille.bind(minimum_height=self.panier_grille.setter('height'))
+        scroll.add_widget(self.panier_grille)
+        self.layout.add_widget(scroll)
+
+        ligne_total = BoxLayout(size_hint=(1, None), height=dp(38), spacing=dp(8))
+        self.lbl_total = etiquette("", 16)
+        btn_vider = Button(text="VIDER", font_size=sp(13), size_hint=(0.25, 1),
+                           background_color=(0.8, 0.3, 0.1, 1))
+        btn_vider.bind(on_press=self.vider_panier)
+        ligne_total.add_widget(self.lbl_total)
+        ligne_total.add_widget(btn_vider)
+        self.layout.add_widget(ligne_total)
+
+        self.input_client = champ("Nom du client (facultatif)", 46)
+        self.layout.add_widget(self.input_client)
+
+        btn_valider = bouton("VALIDER LA VENTE", (0, 0.5, 0, 1), hauteur=52)
         btn_valider.bind(on_press=self.valider_vente)
         self.layout.add_widget(btn_valider)
 
-        btn_retour = bouton("RETOUR", (0.5, 0.5, 0.5, 1))
-        btn_retour.bind(on_press=self.afficher_menu)
-        self.layout.add_widget(btn_retour)
-
         self._charger_medocs("")
+        self._rafraichir_panier()
         self.input_recherche.bind(text=lambda inst, val: self._charger_medocs(val))
         self.spin_medoc.bind(text=self._medoc_choisi)
 
@@ -796,22 +844,53 @@ class PharmacieApp(App):
         self.spin_medoc.values = valeurs
         if self.spin_medoc.text not in self._medocs_map:
             self.spin_medoc.text = TEXTE_CHOIX if valeurs else "Aucun résultat"
-            self.lbl_info.text = ""
         if recherche and len(valeurs) == 1:
             self.spin_medoc.text = valeurs[0]
 
     def _medoc_choisi(self, spinner, texte):
         r = self._medocs_map.get(texte)
         if r:
-            self.lbl_info.text = f"Prix : {fmt_aff(r['prix_vente'])} FCFA   |   Stock : {r['stock']}"
-        else:
-            self.lbl_info.text = ""
+            self.msg_vendre.color = BLANC
+            self.msg_vendre.text = f"Prix : {fmt_aff(r['prix_vente'])} FCFA   |   Stock : {r['stock']}"
 
     def _erreur_vente(self, texte):
         self.msg_vendre.color = ROUGE
         self.msg_vendre.text = texte
 
-    def valider_vente(self, instance):
+    def _rafraichir_panier(self):
+        self.panier_grille.clear_widgets()
+        total = 0
+        if not self.panier:
+            self.panier_grille.add_widget(etiquette(
+                "Panier vide. Choisissez un produit, entrez la quantité, puis « AJOUTER AU PANIER ».",
+                13, 50, "center"))
+        for i, l in enumerate(self.panier):
+            sous_total = l["qte"] * l["prix"]
+            total += sous_total
+            ligne = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(6))
+            lbl = etiquette(f"{l['qte']} x {l['nom']}\n{fmt_aff(l['prix'])} F  =  {fmt_aff(sous_total)} F", 13)
+            lbl.size_hint_x = 0.82
+            b = Button(text="X", font_size=sp(16), size_hint=(0.18, 1),
+                       background_color=(0.8, 0, 0, 1))
+            b.bind(on_press=lambda x, idx=i: self._retirer_ligne(idx))
+            ligne.add_widget(lbl)
+            ligne.add_widget(b)
+            self.panier_grille.add_widget(ligne)
+        if self.panier:
+            self.lbl_total.text = f"TOTAL : {fmt_aff(total)} FCFA  ({len(self.panier)} article(s))"
+        else:
+            self.lbl_total.text = "TOTAL : 0 FCFA"
+
+    def _retirer_ligne(self, idx):
+        if 0 <= idx < len(self.panier):
+            self.panier.pop(idx)
+        self._rafraichir_panier()
+
+    def vider_panier(self, instance):
+        self.panier = []
+        self._rafraichir_panier()
+
+    def ajouter_panier(self, instance):
         r = self._medocs_map.get(self.spin_medoc.text)
         if r is None:
             self._erreur_vente("Choisissez un médicament dans la liste.")
@@ -819,14 +898,37 @@ class PharmacieApp(App):
         try:
             qte = int(self.input_qte.text.strip())
         except ValueError:
-            self._erreur_vente("Erreur : quantité invalide.")
+            self._erreur_vente("Entrez la quantité.")
             return
         if qte <= 0:
-            self._erreur_vente("Erreur : la quantité doit être supérieure à 0.")
+            self._erreur_vente("La quantité doit être supérieure à 0.")
             return
+        deja = next((l for l in self.panier if l["id"] == r["id"]), None)
+        total_qte = qte + (deja["qte"] if deja else 0)
+        if total_qte > (r["stock"] or 0):
+            self._erreur_vente(f"Stock insuffisant ({r['stock']} dispo).")
+            return
+        if deja:
+            deja["qte"] = total_qte
+        else:
+            self.panier.append({"id": r["id"], "nom": r["nom"], "qte": qte,
+                                "prix": r["prix_vente"] or 0})
+        self.input_qte.text = ""
+        self.input_recherche.text = ""
+        self._charger_medocs("")
+        self.spin_medoc.text = TEXTE_CHOIX
+        self._rafraichir_panier()
+        self.msg_vendre.color = VERT
+        self.msg_vendre.text = f"Ajouté : {qte} x {r['nom']}"
 
+    def valider_vente(self, instance):
+        if not self.panier:
+            self._erreur_vente("Le panier est vide.")
+            return
         try:
-            vente = enregistrer_vente(CHEMIN_DB, r["id"], qte, self.input_client.text.strip())
+            vente = enregistrer_vente_panier(
+                CHEMIN_DB, [(l["id"], l["qte"]) for l in self.panier],
+                self.input_client.text.strip())
             texte = construire_recu(lire_parametres(CHEMIN_DB), vente)
             ecrire_recu(DOSSIER_RECUS, vente["groupe"], texte)
         except ValueError as e:
@@ -836,12 +938,14 @@ class PharmacieApp(App):
             self._erreur_vente(f"Erreur : {str(e)}")
             return
 
-        self.input_qte.text = ""
+        nb = len(vente["lignes"])
+        self.panier = []
         self.input_client.text = ""
         self._charger_medocs(self.input_recherche.text)
+        self._rafraichir_panier()
         self.msg_vendre.color = VERT
-        self.msg_vendre.text = (f"Vendu : {vente['qte']} x {vente['nom']}\n"
-                                f"Total : {fmt_aff(vente['total'])} FCFA\nReçu généré !")
+        self.msg_vendre.text = (f"Vente enregistrée : {nb} article(s)\n"
+                                f"Total : {fmt_aff(vente['total'])} FCFA - reçu généré")
 
     # ====================================================
     # ÉCRAN STOCK
