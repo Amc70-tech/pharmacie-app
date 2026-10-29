@@ -43,6 +43,7 @@ NOM_DEPOT_DEFAUT = "DÉPÔT PHARMACEUTIQUE"
 LARGEUR_RECU = 40
 SEUIL_DEFAUT = 10
 TEXTE_CHOIX = "Choisir un médicament (liste)"
+TEXTE_CHOIX_PRODUIT = "Choisir un produit (liste)"
 TOUS_FOURNISSEURS = "Tous les fournisseurs"
 
 
@@ -62,7 +63,7 @@ def fmt_aff(n):
         return str(n)
     if n == int(n):
         return f"{int(n):,}".replace(",", " ")
-    return f"{n:.2f}"
+    return f"{n:,.2f}".replace(",", " ")
 
 
 def fmt_csv(n):
@@ -145,7 +146,7 @@ def lister_medicaments(chemin_db, recherche=""):
     conn = connexion(chemin_db)
     try:
         rows = [dict(r) for r in conn.execute(
-            "SELECT id, nom, stock, prix_vente FROM medicaments ORDER BY nom")]
+            "SELECT id, nom, stock, prix_vente, prix_achat, lot FROM medicaments ORDER BY nom")]
     finally:
         conn.close()
     mot = sans_accents(recherche).lower().strip()
@@ -439,6 +440,93 @@ def importer_medicaments(chemin_db, medocs):
     return ajoutes, maj
 
 
+# ----------------------------------------------------
+# Bilan du jour / modification d'un produit / utilisateurs
+# ----------------------------------------------------
+def calculer_bilan(chemin_db, jour=None):
+    jour = jour or datetime.now().strftime("%Y-%m-%d")
+    conn = connexion(chemin_db)
+    try:
+        ventes = conn.execute(
+            "SELECT medicament, quantite, total, groupe FROM ventes WHERE date_vente LIKE ?",
+            (f"{jour}%",)).fetchall()
+    finally:
+        conn.close()
+    cumul = {}
+    for v in ventes:
+        cumul[v["medicament"]] = cumul.get(v["medicament"], 0) + (v["quantite"] or 0)
+    return {
+        "jour": jour,
+        "nb_lignes": len(ventes),
+        "ca": sum(v["total"] or 0 for v in ventes),
+        "transactions": len({v["groupe"] for v in ventes if v["groupe"]}),
+        "articles": sum(v["quantite"] or 0 for v in ventes),
+        "top": sorted(cumul.items(), key=lambda x: (-x[1], x[0]))[:3],
+    }
+
+
+def texte_bilan(b):
+    try:
+        date_aff = datetime.strptime(b["jour"], "%Y-%m-%d").strftime("%d/%m/%Y")
+    except ValueError:
+        date_aff = b["jour"]
+    if b["nb_lignes"] == 0:
+        return f"Aucune vente aujourd'hui ({date_aff})."
+    lignes = [f"Date : {date_aff}", "",
+              "Chiffre d'affaires :", f"   {fmt_aff(b['ca'])} FCFA", "",
+              f"Transactions : {b['transactions']}",
+              f"Articles vendus : {b['articles']}", "",
+              "TOP 3 PRODUITS :"]
+    for nom, q in b["top"]:
+        lignes.append(f"  - {nom} : {q}")
+    return "\n".join(lignes)
+
+
+def modifier_produit(chemin_db, produit_id, nom, prix_achat, prix_vente, stock):
+    nom = (nom or "").strip()
+    if not nom:
+        raise ValueError("Le nom ne peut pas être vide.")
+    if prix_achat < 0 or prix_vente < 0 or stock < 0:
+        raise ValueError("Les prix et le stock ne peuvent pas être négatifs.")
+    conn = connexion(chemin_db)
+    try:
+        cur = conn.execute(
+            "UPDATE medicaments SET nom=?, prix_achat=?, prix_vente=?, stock=? WHERE id=?",
+            (nom, prix_achat, prix_vente, stock, produit_id))
+        if cur.rowcount == 0:
+            raise ValueError("Produit introuvable.")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def lister_utilisateurs(chemin_db):
+    conn = connexion(chemin_db)
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT id, username, role FROM utilisateurs ORDER BY username")]
+    finally:
+        conn.close()
+
+
+def ajouter_utilisateur(chemin_db, nom, mot_de_passe, role="vendeur"):
+    nom = (nom or "").strip()
+    mot_de_passe = (mot_de_passe or "").strip()
+    if not nom or len(mot_de_passe) < 4:
+        raise ValueError("Nom requis et mot de passe de 4 caractères minimum.")
+    conn = connexion(chemin_db)
+    try:
+        if conn.execute("SELECT 1 FROM utilisateurs WHERE LOWER(username)=LOWER(?)", (nom,)).fetchone():
+            raise ValueError("Ce nom existe déjà.")
+        sel = os.urandom(16).hex()
+        h = hashlib.sha256((sel + mot_de_passe).encode()).hexdigest()
+        conn.execute("INSERT INTO utilisateurs (username, password_hash, sel, role) VALUES (?, ?, ?, ?)",
+                     (nom, h, sel, role))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 # ====================================================
 # ANDROID : partage, enregistrement et ouverture de fichiers
 # ====================================================
@@ -663,7 +751,9 @@ class PharmacieApp(App):
         migrer_base(CHEMIN_DB)
         self.layout = BoxLayout(orientation='vertical', padding=dp(12), spacing=dp(8))
         self.username_courant = ""
+        self.role_courant = ""
         self._medocs_map = {}
+        self._modif_map = {}
         self._recu_courant = ""
         self.panier = []
         self.afficher_connexion()
@@ -727,6 +817,7 @@ class PharmacieApp(App):
                 h = hashlib.sha256((user["sel"] + password).encode()).hexdigest()
                 if h == user["password_hash"]:
                     self.username_courant = username
+                    self.role_courant = (user["role"] or "").strip().lower()
                     self.afficher_menu()
                 else:
                     self.message.text = "Mot de passe incorrect."
@@ -738,26 +829,56 @@ class PharmacieApp(App):
     # ====================================================
     # MENU PRINCIPAL
     # ====================================================
+    def _est_admin(self):
+        return self.role_courant == "admin"
+
+    def _admin_requis(self):
+        """Écrans réservés à l'administrateur : un vendeur est renvoyé au menu."""
+        if self._est_admin():
+            return True
+        self.afficher_menu()
+        return False
+
+    def _entete(self, texte, taille=20):
+        """Barre du haut : bouton MENU + titre de l'écran."""
+        entete = BoxLayout(size_hint=(1, None), height=dp(44), spacing=dp(8))
+        btn_menu = Button(text="< MENU", font_size=sp(14), size_hint=(0.3, 1),
+                          background_color=(0.5, 0.5, 0.5, 1))
+        btn_menu.bind(on_press=self.afficher_menu)
+        entete.add_widget(btn_menu)
+        entete.add_widget(Label(text=texte, font_size=sp(taille), bold=True))
+        self.layout.add_widget(entete)
+
     def afficher_menu(self, instance=None):
         self.layout.clear_widgets()
-        self.layout.add_widget(titre(f"DÉPÔT PHARMACEUTIQUE\n{self.username_courant}", 20))
+        self.layout.add_widget(titre(f"DÉPÔT PHARMACEUTIQUE\n{self.username_courant}", 18, 60))
 
-        grille = GridLayout(cols=2, spacing=dp(10))
+        # (texte, action, couleur, taille, réservé à l'admin)
         elements = [
-            ("VENDRE", self.afficher_vendre, (0, 0.6, 0, 1), 20),
-            ("STOCK", self.afficher_stock, None, 20),
-            ("REÇUS", self.afficher_recus, None, 20),
-            ("COMMANDE", self.afficher_commande, None, 18),
-            ("IMPORT /\nEXPORT CSV", self.afficher_donnees, None, 16),
-            ("PARAMÈTRES", self.afficher_parametres, None, 16),
+            ("VENDRE", self.afficher_vendre, (0, 0.6, 0, 1), 20, False),
+            ("STOCK", self.afficher_stock, None, 20, False),
+            ("REÇUS", self.afficher_recus, None, 20, False),
+            ("BILAN JOUR", self.afficher_bilan, None, 18, False),
+            ("MODIFIER", self.afficher_modifier, None, 18, True),
+            ("COMMANDE", self.afficher_commande, None, 18, False),
+            ("UTILISATEURS", self.afficher_utilisateurs, None, 16, True),
+            ("IMPORT /\nEXPORT CSV", self.afficher_donnees, None, 16, True),
         ]
-        for texte, action, couleur, taille in elements:
+        grille = GridLayout(cols=2, spacing=dp(8))
+        for texte, action, couleur, taille, admin_seul in elements:
+            if admin_seul and not self._est_admin():
+                continue
             b = Button(text=texte, font_size=sp(taille), halign="center")
             if couleur:
                 b.background_color = couleur
             b.bind(on_press=action)
             grille.add_widget(b)
         self.layout.add_widget(grille)
+
+        if self._est_admin():
+            btn_params = bouton("PARAMÈTRES", hauteur=48, taille=16)
+            btn_params.bind(on_press=self.afficher_parametres)
+            self.layout.add_widget(btn_params)
 
         btn_quitter = bouton("QUITTER", (0.8, 0, 0, 1))
         btn_quitter.bind(on_press=self.deconnexion)
@@ -1167,9 +1288,11 @@ class PharmacieApp(App):
         self.msg_cmd.text = "Commande copiée : collez-la dans WhatsApp, SMS ou email."
 
     # ====================================================
-    # ÉCRAN IMPORT / EXPORT CSV
+    # ÉCRAN IMPORT / EXPORT CSV (administrateur)
     # ====================================================
     def afficher_donnees(self, instance=None):
+        if not self._admin_requis():
+            return
         self.layout.clear_widgets()
         self.layout.add_widget(titre("IMPORT / EXPORT CSV", 20, 60))
 
@@ -1242,9 +1365,179 @@ class PharmacieApp(App):
         self._fin_donnees(True, info)
 
     # ====================================================
-    # ÉCRAN PARAMÈTRES
+    # ÉCRAN MODIFIER UN PRODUIT (administrateur)
+    # ====================================================
+    def afficher_modifier(self, instance=None):
+        if not self._admin_requis():
+            return
+        self.layout.clear_widgets()
+        self._entete("MODIFIER", 18)
+
+        self.modif_recherche = champ("Rechercher un produit...", 44)
+        self.layout.add_widget(self.modif_recherche)
+
+        self.spin_modif = Spinner(text=TEXTE_CHOIX_PRODUIT, values=[], font_size=sp(16),
+                                  size_hint=(1, None), height=dp(48), option_cls=OptionListe)
+        self.layout.add_widget(self.spin_modif)
+
+        self.modif_nom = champ("Nom du produit", 44)
+        self.modif_pa = champ("Prix d'achat", 44, input_filter='float')
+        self.modif_pv = champ("Prix de vente", 44, input_filter='float')
+        self.modif_stock = champ("Stock", 44, input_filter='int')
+        for c in (self.modif_nom, self.modif_pa, self.modif_pv, self.modif_stock):
+            self.layout.add_widget(c)
+
+        self.msg_modif = etiquette("", 14, 40, "center")
+        self.layout.add_widget(self.msg_modif)
+
+        btn_sauver = bouton("ENREGISTRER LES MODIFICATIONS", (0, 0.6, 0, 1), hauteur=52, taille=15)
+        btn_sauver.bind(on_press=self._sauvegarder_modification)
+        self.layout.add_widget(btn_sauver)
+
+        self._modif_map = {}
+        self._charger_modif("")
+        self.modif_recherche.bind(text=lambda inst, val: self._charger_modif(val))
+        self.spin_modif.bind(text=self._afficher_valeurs_modif)
+
+    def _vider_champs_modif(self):
+        for c in (self.modif_nom, self.modif_pa, self.modif_pv, self.modif_stock):
+            c.text = ""
+
+    def _charger_modif(self, recherche="", garder_id=None):
+        try:
+            rows = lister_medicaments(CHEMIN_DB, recherche)
+        except Exception as e:
+            self.msg_modif.color = ROUGE
+            self.msg_modif.text = f"Erreur : {e}"
+            return
+        self._modif_map = {}
+        valeurs = []
+        choix = None
+        for r in rows[:150]:
+            etiq = r["nom"] + (f"  ·  lot {r['lot']}" if r.get("lot") else "")
+            if etiq in self._modif_map:
+                etiq += f"  #{r['id']}"
+            self._modif_map[etiq] = r
+            valeurs.append(etiq)
+            if garder_id is not None and r["id"] == garder_id:
+                choix = etiq
+        self.spin_modif.values = valeurs
+        if choix:
+            self.spin_modif.text = choix
+            self._afficher_valeurs_modif(self.spin_modif, choix)
+        elif self.spin_modif.text not in self._modif_map:
+            self.spin_modif.text = TEXTE_CHOIX_PRODUIT if valeurs else "Aucun résultat"
+            self._vider_champs_modif()
+        if recherche and len(valeurs) == 1:
+            self.spin_modif.text = valeurs[0]
+            self._afficher_valeurs_modif(self.spin_modif, valeurs[0])
+
+    def _afficher_valeurs_modif(self, spinner, texte):
+        r = self._modif_map.get(texte)
+        if r:
+            self.modif_nom.text = r["nom"]
+            self.modif_pa.text = fmt_csv(r["prix_achat"])
+            self.modif_pv.text = fmt_csv(r["prix_vente"])
+            self.modif_stock.text = str(r["stock"] or 0)
+            self.msg_modif.text = ""
+
+    def _sauvegarder_modification(self, instance):
+        r = self._modif_map.get(self.spin_modif.text)
+        if not r:
+            self.msg_modif.color = ROUGE
+            self.msg_modif.text = "Choisissez un produit."
+            return
+        try:
+            pa = _nombre(self.modif_pa.text, r["prix_achat"] or 0)
+            pv = _nombre(self.modif_pv.text, r["prix_vente"] or 0)
+            stock = int(_nombre(self.modif_stock.text, r["stock"] or 0))
+        except ValueError:
+            self.msg_modif.color = ROUGE
+            self.msg_modif.text = "Valeurs invalides."
+            return
+        try:
+            modifier_produit(CHEMIN_DB, r["id"], self.modif_nom.text or r["nom"], pa, pv, stock)
+        except ValueError as e:
+            self.msg_modif.color = ROUGE
+            self.msg_modif.text = str(e)
+            return
+        except Exception as e:
+            self.msg_modif.color = ROUGE
+            self.msg_modif.text = f"Erreur : {e}"
+            return
+        self._charger_modif(self.modif_recherche.text, garder_id=r["id"])
+        self.msg_modif.color = VERT
+        self.msg_modif.text = "Produit modifié avec succès !"
+
+    # ====================================================
+    # ÉCRAN BILAN DU JOUR
+    # ====================================================
+    def afficher_bilan(self, instance=None):
+        self.layout.clear_widgets()
+        self._entete("BILAN DU JOUR", 18)
+        try:
+            texte = texte_bilan(calculer_bilan(CHEMIN_DB))
+        except Exception as e:
+            texte = f"Erreur : {e}"
+        lbl = etiquette(texte, 17)
+        lbl.valign = "top"
+        self.layout.add_widget(lbl)
+
+    # ====================================================
+    # ÉCRAN UTILISATEURS (administrateur)
+    # ====================================================
+    def afficher_utilisateurs(self, instance=None, message=None):
+        if not self._admin_requis():
+            return
+        self.layout.clear_widgets()
+        self._entete("UTILISATEURS", 18)
+
+        scroll = ScrollView()
+        grille = GridLayout(cols=1, spacing=dp(4), size_hint_y=None)
+        grille.bind(minimum_height=grille.setter('height'))
+        try:
+            for u in lister_utilisateurs(CHEMIN_DB):
+                grille.add_widget(etiquette(f"{u['username']}  ({u['role']})", 15, 34))
+        except Exception as e:
+            grille.add_widget(etiquette(f"Erreur : {e}", 14, 34))
+        scroll.add_widget(grille)
+        self.layout.add_widget(scroll)
+
+        self.nouv_user = champ("Nouveau vendeur (nom)", 46)
+        self.nouv_mdp = champ("Mot de passe (4 caractères min.)", 46, password=True)
+        self.layout.add_widget(self.nouv_user)
+        self.layout.add_widget(self.nouv_mdp)
+
+        self.msg_user = etiquette("", 14, 26, "center")
+        if message:
+            self.msg_user.color = VERT
+            self.msg_user.text = message
+        self.layout.add_widget(self.msg_user)
+
+        btn_ajouter = bouton("AJOUTER LE VENDEUR", (0, 0.6, 0, 1), hauteur=52, taille=16)
+        btn_ajouter.bind(on_press=self._ajouter_utilisateur)
+        self.layout.add_widget(btn_ajouter)
+
+    def _ajouter_utilisateur(self, instance):
+        nom = self.nouv_user.text.strip()
+        try:
+            ajouter_utilisateur(CHEMIN_DB, nom, self.nouv_mdp.text, "vendeur")
+        except ValueError as e:
+            self.msg_user.color = ROUGE
+            self.msg_user.text = str(e)
+            return
+        except Exception as e:
+            self.msg_user.color = ROUGE
+            self.msg_user.text = f"Erreur : {e}"
+            return
+        self.afficher_utilisateurs(message=f"Vendeur {nom} ajouté !")
+
+    # ====================================================
+    # ÉCRAN PARAMÈTRES (administrateur)
     # ====================================================
     def afficher_parametres(self, instance=None):
+        if not self._admin_requis():
+            return
         self.layout.clear_widgets()
         self.layout.add_widget(titre("PARAMÈTRES", 22, 50))
 
@@ -1306,229 +1599,6 @@ class PharmacieApp(App):
         except Exception as e:
             self.msg_params.color = ROUGE
             self.msg_params.text = f"Erreur : {str(e)}"
-            # ====================================================
-# NOUVEAU : MODIFIER UN PRODUIT
-# ====================================================
-def afficher_modifier(self, instance=None):
-    self.layout.clear_widgets()
-    self.layout.add_widget(titre("MODIFIER UN PRODUIT", 22, 50))
-
-    self.spin_modif = Spinner(text="Choisir un produit", values=[], font_size=sp(16),
-                              size_hint=(1, None), height=dp(52), option_cls=OptionListe)
-    self.layout.add_widget(self.spin_modif)
-
-    self.modif_nom = champ("Nouveau nom")
-    self.modif_pa = champ("Nouveau prix d'achat", input_filter='float')
-    self.modif_pv = champ("Nouveau prix de vente", input_filter='float')
-    self.modif_stock = champ("Nouveau stock", input_filter='int')
-    
-    for c in (self.modif_nom, self.modif_pa, self.modif_pv, self.modif_stock):
-        self.layout.add_widget(c)
-
-    self.msg_modif = etiquette("", 14, 30, "center")
-    self.layout.add_widget(self.msg_modif)
-
-    btn_sauver = bouton("ENREGISTRER LES MODIFICATIONS", (0, 0.6, 0, 1), taille=16)
-    btn_sauver.bind(on_press=self._sauvegarder_modification)
-    self.layout.add_widget(btn_sauver)
-
-    btn_retour = bouton("RETOUR", (0.5, 0.5, 0.5, 1))
-    btn_retour.bind(on_press=self.afficher_menu)
-    self.layout.add_widget(btn_retour)
-
-    self._charger_modif()
-    self.spin_modif.bind(text=self._afficher_valeurs_modif)
-
-def _charger_modif(self):
-    try:
-        conn = connexion(CHEMIN_DB)
-        rows = conn.execute("SELECT * FROM medicaments ORDER BY nom").fetchall()
-        conn.close()
-        self._modifs_map = {}
-        valeurs = []
-        for r in rows:
-            etiq = r["nom"]
-            self._modifs_map[etiq] = dict(r)
-            valeurs.append(etiq)
-        self.spin_modif.values = valeurs
-    except Exception as e:
-        self.msg_modif.text = f"Erreur : {e}"
-
-def _afficher_valeurs_modif(self, spinner, texte):
-    r = getattr(self, '_modifs_map', {}).get(texte)
-    if r:
-        self.modif_nom.text = r["nom"]
-        self.modif_pa.text = str(r["prix_achat"])
-        self.modif_pv.text = str(r["prix_vente"])
-        self.modif_stock.text = str(r["stock"])
-
-def _sauvegarder_modification(self, instance):
-    r = getattr(self, '_modifs_map', {}).get(self.spin_modif.text)
-    if not r:
-        self.msg_modif.text = "Choisissez un produit."
-        return
-    try:
-        nom = self.modif_nom.text.strip() or r["nom"]
-        pa = float(self.modif_pa.text or r["prix_achat"])
-        pv = float(self.modif_pv.text or r["prix_vente"])
-        stock = int(self.modif_stock.text or r["stock"])
-        
-        conn = connexion(CHEMIN_DB)
-        conn.execute("UPDATE medicaments SET nom=?, prix_achat=?, prix_vente=?, stock=? WHERE id=?",
-                     (nom, pa, pv, stock, r["id"]))
-        conn.commit()
-        conn.close()
-        self.msg_modif.color = VERT
-        self.msg_modif.text = "Produit modifié avec succès !"
-        self._charger_modif()
-    except ValueError:
-        self.msg_modif.color = ROUGE
-        self.msg_modif.text = "Valeurs invalides."
-    except Exception as e:
-        self.msg_modif.color = ROUGE
-        self.msg_modif.text = f"Erreur : {e}"
-
-
-# ====================================================
-# NOUVEAU : BILAN DU JOUR
-# ====================================================
-def afficher_bilan(self, instance=None):
-    self.layout.clear_widgets()
-    self.layout.add_widget(titre("BILAN DU JOUR", 22, 50))
-
-    aujourd_hui = datetime.now().strftime("%Y-%m-%d")
-    
-    try:
-        conn = connexion(CHEMIN_DB)
-        ventes = conn.execute(
-            "SELECT * FROM ventes WHERE date_vente LIKE ?", (f"{aujourd_hui}%",)
-        ).fetchall()
-        conn.close()
-    except Exception as e:
-        self.layout.add_widget(etiquette(f"Erreur : {e}", 14))
-        ventes = []
-
-    if not ventes:
-        self.layout.add_widget(etiquette(f"Aucune vente aujourd'hui ({aujourd_hui}).", 16, 100, "center"))
-    else:
-        ca = sum(v["total"] for v in ventes)
-        groupes = len(set(v["groupe"] for v in ventes if v["groupe"]))
-        articles = sum(v["quantite"] for v in ventes)
-        
-        top = {}
-        for v in ventes:
-            top[v["medicament"]] = top.get(v["medicament"], 0) + v["quantite"]
-        top3 = sorted(top.items(), key=lambda x: -x[1])[:3]
-
-        txt = f"📅 Date : {aujourd_hui}\n\n"
-        txt += f"💰 Chiffre d'affaires :\n   {fmt_aff(ca)} FCFA\n\n"
-        txt += f"🧾 Transactions : {groupes}\n"
-        txt += f"📦 Articles vendus : {articles}\n\n"
-        txt += "🏆 TOP 3 PRODUITS :\n"
-        for nom, q in top3:
-            txt += f"  • {nom} : {q}\n"
-            
-        self.layout.add_widget(etiquette(txt, 16, None, "left"))
-
-    btn_retour = bouton("RETOUR", (0.5, 0.5, 0.5, 1))
-    btn_retour.bind(on_press=self.afficher_menu)
-    self.layout.add_widget(btn_retour)
-
-
-# ====================================================
-# NOUVEAU : GESTION DES UTILISATEURS
-# ====================================================
-def afficher_utilisateurs(self, instance=None):
-    self.layout.clear_widgets()
-    self.layout.add_widget(titre("UTILISATEURS", 22, 50))
-
-    scroll = ScrollView()
-    grille = GridLayout(cols=1, spacing=dp(6), size_hint_y=None)
-    grille.bind(minimum_height=grille.setter('height'))
-
-    try:
-        conn = connexion(CHEMIN_DB)
-        users = conn.execute("SELECT id, username, role FROM utilisateurs ORDER BY username").fetchall()
-        conn.close()
-        for u in users:
-            txt = f"{u['username']}  ({u['role']})"
-            grille.add_widget(etiquette(txt, 15, 30))
-    except Exception as e:
-        grille.add_widget(etiquette(f"Erreur : {e}", 14))
-
-    scroll.add_widget(grille)
-    self.layout.add_widget(scroll)
-
-    # Formulaire d'ajout
-    self.nouv_user = champ("Nouveau vendeur (nom)")
-    self.nouv_mdp = champ("Mot de passe", password=True)
-    self.layout.add_widget(self.nouv_user)
-    self.layout.add_widget(self.nouv_mdp)
-
-    self.msg_user = etiquette("", 14, 24, "center")
-    self.layout.add_widget(self.msg_user)
-
-    btn_ajouter = bouton("AJOUTER LE VENDEUR", (0, 0.6, 0, 1), taille=16)
-    btn_ajouter.bind(on_press=self._ajouter_utilisateur)
-    self.layout.add_widget(btn_ajouter)
-
-    btn_retour = bouton("RETOUR", (0.5, 0.5, 0.5, 1))
-    btn_retour.bind(on_press=self.afficher_menu)
-    self.layout.add_widget(btn_retour)
-
-def _ajouter_utilisateur(self, instance):
-    u = self.nouv_user.text.strip()
-    m = self.nouv_mdp.text.strip()
-    if not u or len(m) < 4:
-        self.msg_user.color = ROUGE
-        self.msg_user.text = "Nom requis et mot de passe (min 4 car.)."
-        return
-    try:
-        conn = connexion(CHEMIN_DB)
-        if conn.execute("SELECT 1 FROM utilisateurs WHERE username=?", (u,)).fetchone():
-            self.msg_user.color = ROUGE
-            self.msg_user.text = "Ce nom existe déjà."
-            conn.close()
-            return
-        sel = os.urandom(16).hex()
-        h = hashlib.sha256((sel + m).encode()).hexdigest()
-        conn.execute("INSERT INTO utilisateurs (username, password_hash, sel, role) VALUES (?, ?, ?, 'vendeur')", (u, h, sel))
-        conn.commit()
-        conn.close()
-        self.msg_user.color = VERT
-        self.msg_user.text = f"Vendeur {u} ajouté !"
-        self.nouv_user.text = ""
-        self.nouv_mdp.text = ""
-        self.afficher_utilisateurs()
-    except Exception as e:
-        self.msg_user.color = ROUGE
-        self.msg_user.text = f"Erreur : {e}"
-        def afficher_menu(self, instance=None):
-    self.layout.clear_widgets()
-    self.layout.add_widget(titre(f"DÉPÔT PHARMACEUTIQUE\n{self.username_courant}", 18, 60))
-
-    grille = GridLayout(cols=2, spacing=dp(8))
-    elements = [
-        ("VENDRE", self.afficher_vendre, (0, 0.6, 0, 1), 20),
-        ("STOCK", self.afficher_stock, None, 20),
-        ("REÇUS", self.afficher_recus, None, 20),
-        ("BILAN JOUR", self.afficher_bilan, None, 18),
-        ("MODIFIER", self.afficher_modifier, None, 18),
-        ("COMMANDE", self.afficher_commande, None, 18),
-        ("UTILISATEURS", self.afficher_utilisateurs, None, 18),
-        ("CSV / PARAM", self.afficher_donnees, None, 18),
-    ]
-    for texte, action, couleur, taille in elements:
-        b = Button(text=texte, font_size=sp(taille), halign="center")
-        if couleur:
-            b.background_color = couleur
-        b.bind(on_press=action)
-        grille.add_widget(b)
-    self.layout.add_widget(grille)
-
-    btn_quitter = bouton("QUITTER", (0.8, 0, 0, 1))
-    btn_quitter.bind(on_press=self.deconnexion)
-    self.layout.add_widget(btn_quitter)
 
 
 if __name__ == '__main__':
